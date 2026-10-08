@@ -3,7 +3,8 @@
 This is a deliberate ~1-screen reimplementation of the small slice of the main app's
 `backend.genai.llm` we need, so tmux-rc stays standalone (no FastAPI/SQLAlchemy/
 WorkOS pull-in). Credentials come from Google ADC; only GOOGLE_CLOUD_PROJECT and an
-optional region are read from the environment.
+optional region are read from the environment. Setting TMUXRC_LLM_BASE_URL swaps Vertex for
+any OpenAI-compatible chat-completions endpoint (see .env.example).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import logging
 import os
 import time
 from functools import cache
+from types import SimpleNamespace
 
 from .telemetry import emit_parse
 
@@ -36,6 +38,14 @@ def genai_types():
 # Gemini 3.1 Flash Lite — cheap/fast, strong at reading terminal text & screenshots.
 # Override with TMUXRC_GEMINI_MODEL if a newer flash-lite ships.
 _MODEL = os.environ.get("TMUXRC_GEMINI_MODEL", "gemini-3.1-flash-lite")
+# OpenAI-compatible backend (e.g. a LiteLLM gateway) instead of Vertex: set
+# TMUXRC_LLM_BASE_URL (".../v1") plus TMUXRC_LLM_API_KEY and TMUXRC_LLM_MODEL; optional
+# TMUXRC_LLM_CA_BUNDLE for a private CA and TMUXRC_LLM_EXTRA_BODY (JSON) for provider
+# knobs. Unset = Vertex, unchanged.
+_OPENAI_BASE = os.environ.get("TMUXRC_LLM_BASE_URL", "").rstrip("/")
+if _OPENAI_BASE:
+    _MODEL = os.environ.get("TMUXRC_LLM_MODEL", _MODEL)
+_PROVIDER = "openai-compat" if _OPENAI_BASE else "vertex"
 # Flash-Lite pricing (USD per 1M tokens); override if it changes. These defaults were
 # 2.5-flash-lite's prices ($0.10/$0.40) long after the model moved to 3.1 — every cost
 # this daemon ever reported was ~2.5x under reality. Cached input bills at 10% of list.
@@ -141,6 +151,66 @@ def _client():
     )
 
 
+class _OpenAIError(Exception):
+    """A non-2xx from the OpenAI-compatible endpoint; `code` feeds _handle_llm_error."""
+
+    def __init__(self, code: int, body: str):
+        super().__init__(f"HTTP {code}: {body[:160]}")
+        self.code = code
+
+
+class _OpenAIResp:
+    """Shapes a chat-completions reply like the Gemini response the rest of this module
+    reads: `.text` and `.usage_metadata` with Gemini's token field names."""
+
+    def __init__(self, data: dict):
+        self.text = data["choices"][0]["message"].get("content") or ""
+        u = data.get("usage") or {}
+        details = u.get("prompt_tokens_details") or {}
+        self.usage_metadata = SimpleNamespace(
+            prompt_token_count=u.get("prompt_tokens", 0),
+            cached_content_token_count=details.get("cached_tokens", 0),
+            candidates_token_count=u.get("completion_tokens", 0),
+        )
+
+
+@cache
+def _http():
+    import httpx  # noqa: PLC0415 - only the OpenAI-compatible backend needs it
+
+    timeout_s = int(os.environ.get("TMUXRC_LLM_TIMEOUT_MS", "20000")) / 1000
+    return httpx.Client(
+        base_url=_OPENAI_BASE,
+        headers={"Authorization": f"Bearer {os.environ.get('TMUXRC_LLM_API_KEY', '')}"},
+        timeout=timeout_s,
+        verify=os.environ.get("TMUXRC_LLM_CA_BUNDLE") or True,
+    )
+
+
+def _openai_generate(
+    system: str | None, text: str, image_png: bytes | None, json_mode: bool
+) -> _OpenAIResp:
+    content: list | str = text
+    if image_png is not None:
+        import base64  # noqa: PLC0415
+
+        url = "data:image/png;base64," + base64.b64encode(image_png).decode()
+        content = [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]
+    messages = ([{"role": "system", "content": system}] if system else []) + [
+        {"role": "user", "content": content}
+    ]
+    body: dict = {"model": _MODEL, "messages": messages, "temperature": 0.0}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    # Provider knobs merged verbatim, e.g. TMUXRC_LLM_EXTRA_BODY='{"reasoning_effort":"low"}'
+    # — a reasoning model otherwise spends ~10x the output tokens thinking about a screen.
+    body.update(json.loads(os.environ.get("TMUXRC_LLM_EXTRA_BODY") or "{}"))
+    r = _http().post("/chat/completions", json=body)
+    if r.status_code >= 400:
+        raise _OpenAIError(r.status_code, r.text)
+    return _OpenAIResp(r.json())
+
+
 # Shared backoff for OPERATIONAL failures. Vertex quota errors come in bursts; without a
 # backoff every heartbeat re-parse burns another call (and logged another full traceback)
 # while the quota window resets. On failure we stop calling for `delay` seconds (15s
@@ -200,8 +270,12 @@ def _handle_llm_error(e: Exception) -> str:
         short = "Google auth expired — run: gcloud auth application-default login"
         logger.warning("LLM parse failed: %s", short)
         _arm_backoff()  # nothing will succeed until a human runs gcloud
+    elif getattr(e, "code", None) in (401, 403):
+        short = f"LLM endpoint refused credentials ({e.code})"
+        logger.warning("LLM parse failed: %s", short)
+        _arm_backoff()
     elif "timeout" in msg.lower() or "Timeout" in type(e).__name__:
-        short = "Vertex request timed out"
+        short = f"{'LLM' if _OPENAI_BASE else 'Vertex'} request timed out"
         logger.warning("LLM parse failed: %s", short)
         _arm_backoff()
     elif "JSONDecodeError" in type(e).__name__:
@@ -269,20 +343,23 @@ def classify_text(
         return None
     t0 = time.time()
     try:
-        types = genai_types()
+        if _OPENAI_BASE:
+            resp = _openai_generate(system, text, image_png, json_mode=True)
+        else:
+            types = genai_types()
 
-        parts: list = [text]
-        if image_png is not None:
-            parts.append(types.Part.from_bytes(data=image_png, mime_type="image/png"))
-        resp = _client().models.generate_content(
-            model=_MODEL,
-            contents=parts,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                response_mime_type="application/json",
-                temperature=0.0,
-            ),
-        )
+            parts: list = [text]
+            if image_png is not None:
+                parts.append(types.Part.from_bytes(data=image_png, mime_type="image/png"))
+            resp = _client().models.generate_content(
+                model=_MODEL,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    response_mime_type="application/json",
+                    temperature=0.0,
+                ),
+            )
         result = _parse_json(resp.text)
         # Trace the tail we sent and what came back — grep /tmp/tmux-rc-llm.log.
         _trace.info("IN%s: %r", "+img" if image_png else "", text[-500:])
@@ -317,19 +394,20 @@ def summarize_events(event_texts: list[str]) -> str | None:
     if not event_texts or _backoff_remaining() > 0:
         return None  # skip while rate-limited — same gate as classify_text
     try:
-        types = genai_types()
-
         joined = "\n".join(f"- {t}" for t in event_texts[-60:])
-        resp = _client().models.generate_content(
-            model=_MODEL,
-            contents=[
-                (
-                    "Summarize this burst of terminal activity in ONE short sentence "
-                    f"(what was accomplished, past tense):\n{joined}"
-                )
-            ],
-            config=types.GenerateContentConfig(temperature=0.0),
+        prompt = (
+            "Summarize this burst of terminal activity in ONE short sentence "
+            f"(what was accomplished, past tense):\n{joined}"
         )
+        if _OPENAI_BASE:
+            resp = _openai_generate(None, prompt, None, json_mode=False)
+        else:
+            types = genai_types()
+            resp = _client().models.generate_content(
+                model=_MODEL,
+                contents=[prompt],
+                config=types.GenerateContentConfig(temperature=0.0),
+            )
         _record(resp)
         return (resp.text or "").strip()[:200] or None
     except Exception as e:  # noqa: BLE001
@@ -395,7 +473,7 @@ def _emit(
         )
         emit_parse(
             model=_MODEL,
-            provider="vertex",
+            provider=_PROVIDER,
             pane_uid=pane_uid,
             pane_label=pane_label,
             pane_text=text,
