@@ -32,7 +32,7 @@ official [`bw` CLI](https://bitwarden.com/help/cli/).
 | `TMUXRC_VAULT_SERVER` | — | the server URL, e.g. `https://vault.example.org` |
 | `TMUXRC_VAULT_EMAIL` | — | the dedicated account's email |
 | `TMUXRC_VAULT_PASSWORD_FILE` | — | the master password file; refused unless only its owner can read it |
-| `TMUXRC_VAULT_BW` | `bw` | path to the `bw` binary, when it isn't on the daemon's `PATH` |
+| `TMUXRC_VAULT_BW` | `bw` | path to the `bw` binary. Usually absolute: an npm install (e.g. `/opt/node-…/bin/bw`) is not on the systemd unit's `PATH`, and its `#!/usr/bin/env node` needs `node` on that `PATH` |
 | `TMUXRC_VAULT_APPDATA` | `~/.local/state/tmux-rc/bw` | `bw`'s own data dir, kept apart from any `bw` you use by hand |
 
 The feature is off, and its button hidden, unless the first three are all set. The first
