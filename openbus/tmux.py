@@ -69,10 +69,12 @@ _PASSWORD_PROMPT = re.compile(r"\b(password|passphrase|pin)\b.*:\s*$", re.IGNORE
 _UNREADABLE = (OSError, termios.error, subprocess.CalledProcessError, ValueError)
 
 
-def _quiet_reader(tty: str, shell_pid: str) -> bool:
+def _quiet_reader(tty: str, shell_pid: str, strict: bool = False) -> bool:
     """Something reads `tty` with ECHO off that is not the pane's idle shell: either
     line editing (ICANON) is on, which readline never leaves on, or the foreground
-    process group (the shell's tpgid, /proc field 8) is not the shell's own."""
+    process group (the shell's tpgid, /proc field 8) is not the shell's own. `strict`
+    accepts only the first: a raw tty may be a TUI or an ssh session relaying a far
+    prompt, which a password the user never typed must not be guessed into."""
     fd = os.open(tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
     try:
         lflag = termios.tcgetattr(fd)[3]
@@ -82,15 +84,17 @@ def _quiet_reader(tty: str, shell_pid: str) -> bool:
         return False
     if lflag & termios.ICANON:
         return True
+    if strict:
+        return False
     with open(f"/proc/{int(shell_pid)}/stat") as stat:
         return stat.read().rpartition(")")[2].split()[5] != shell_pid
 
 
-def _password_prompt(pane_id: str, tty: str, shell_pid: str) -> bool:
+def _password_prompt(pane_id: str, tty: str, shell_pid: str, strict: bool = False) -> bool:
     """A quiet reader (above) and the cursor's row ends in a password prompt (see
     Pane.secret). Raises one of _UNREADABLE when it can't tell; each caller picks its
     own default."""
-    if not _quiet_reader(tty, shell_pid):
+    if not _quiet_reader(tty, shell_pid, strict):
         return False
     # The cursor's whole line: a narrow pane wraps a long prompt over several rows, which
     # -J joins. From the top of the screen and a few rows of history, so a prompt's start
@@ -99,7 +103,7 @@ def _password_prompt(pane_id: str, tty: str, shell_pid: str) -> bool:
     line = _run(["capture-pane", "-p", "-J", "-t", pane_id, "-S", "-8", "-E", y])
     # ECHO again after the screen read: a prompt answered meanwhile left its row behind.
     return bool(_PASSWORD_PROMPT.search(line.removesuffix("\n").rpartition("\n")[2])) \
-        and _quiet_reader(tty, shell_pid)
+        and _quiet_reader(tty, shell_pid, strict)
 
 
 @dataclass(frozen=True)
@@ -777,13 +781,14 @@ AT_PASSWORD = "The pane is asking for a password: use the password field."
 PROMPT_KEYS = frozenset({"Enter", "Escape", "C-c", "C-d", "C-u"})
 
 
-def at_password_prompt(pane_id: str, *, unknown: bool = True) -> bool:
+def at_password_prompt(pane_id: str, *, unknown: bool = True, strict: bool = False) -> bool:
     """Read fresh, for the send lock's holder (see Pane.secret). An unreadable tty reads
     as `unknown`, which each caller sets to fail closed: True for plain text, which
-    might be a password, and False for a password, which needs the prompt confirmed."""
+    might be a password, and False for a password, which needs the prompt confirmed.
+    `strict`: see _quiet_reader."""
     try:
         tty, pid = _run(["display-message", "-p", "-t", pane_id, "#{pane_tty} #{pane_pid}"]).split()
-        return _password_prompt(pane_id, tty, pid)
+        return _password_prompt(pane_id, tty, pid, strict)
     except _UNREADABLE:
         return unknown
 
@@ -924,19 +929,20 @@ def send_keys(
             _run(["send-keys", "-t", pane_id, "Enter"])
 
 
-def send_secret(pane: Pane, secret: str) -> None:
+def send_secret(pane: Pane, secret: str, *, strict: bool = False) -> None:
     """Answer `pane`'s password prompt with `secret` and submit it. The secret goes in
     on tmux's stdin (`load-buffer -`), never argv, where any local `ps` could read it,
     and its one-shot buffer is deleted as it is pasted. Refuses unless the pane is the
     same one and still at the prompt, checked under the send lock: a stale page must not
-    type a password into whatever replaced the prompt."""
+    type a password into whatever replaced the prompt. `strict` (a vault fill) also
+    refuses a raw tty: see _quiet_reader."""
     name = f"tmuxrc-secret-{secrets.token_hex(8)}"
     with _pane_lock(pane.id):
         try:
             _run(["load-buffer", "-b", name, "-"], stdin=secret)
             # Checked after the load, right before the paste, identity last: the pane can
             # be replaced (and its id recycled) while load-buffer or the prompt check runs.
-            if not at_password_prompt(pane.id, unknown=False):
+            if not at_password_prompt(pane.id, unknown=False, strict=strict):
                 raise PaneChangedError(
                     "The pane is no longer asking for a password; nothing was sent.")
             check_pane(pane.id, pane.pid)

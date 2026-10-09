@@ -37,19 +37,27 @@ official [`bw` CLI](https://bitwarden.com/help/cli/).
 
 The feature is off, and its button hidden, unless the first three are all set. The first
 use logs in (or unlocks) and syncs, so it takes a few seconds; later lists sync at most once
-a minute.
+a minute, and list `bw`'s local copy when the server can't be reached.
 
 ## Security model
 
-- **The browser sees names and usernames only.** `GET /api/vault/items` returns ids, names
-  and usernames. A fill sends only the entry's id (`vault_item` on `/compose`); the daemon
-  looks the password up and sends it down the same path as a typed one, with the same
-  guards: the pane must be at a password prompt when it arrives, the value must be one
-  printable line, and it reaches tmux on stdin, never argv.
-- **The audit line names the entry, never the value:** `secret (vault: <entry name>)`.
+- **Passwords stay out of the page, as hygiene.** `GET /api/vault/items` returns ids, names
+  and usernames, and a fill sends only the entry's id (`vault_item` on `/compose`), so a
+  password never sits in the browser's memory, history or caches. This is not a boundary
+  against a hostile client of the daemon: anyone who can reach it can fill any entry into
+  a prompt they control and read what arrives, just as they can already type into any
+  pane. That is why the account is dedicated and holds only what the phone should fill,
+  and why the [deploy pages](../) put a real login in front of the daemon.
+- **A fill goes to a local password prompt only.** The daemon sends it down the same path
+  as a typed password, with the same guards (the pane must still be at the prompt when it
+  arrives, the value must be one printable line, it reaches tmux on stdin, never argv),
+  plus one more: the pane's tty must be a local line reader, echo off with line editing
+  on, as `sudo`, `ssh`'s own prompt, `git` and `read -s` are. A raw tty is refused, so a
+  vault fill cannot answer `sudo` on the far side of an `ssh` session, or anything a
+  full-screen app draws; type that password instead.
+- **The audit line names the entry, never the value:** `secret (vault: <entry name>)`, with
+  control characters dropped from the name.
 - **The master password stays in its file** (`bw --passwordfile`). The session key `bw`
   hands back is held in the daemon's memory only and passed to later `bw` calls in their
-  environment (`BW_SESSION`), never on a command line where `ps` would show it.
-- Anyone who can reach the daemon can fill any entry in that vault into a password prompt,
-  as they can already type into any pane. That is why the account is dedicated, and why
-  the [deploy pages](../) put a real login in front of the daemon.
+  environment (`BW_SESSION`), never on a command line where `ps` would show it. A refused
+  login or unlock is not retried for a minute.

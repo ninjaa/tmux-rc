@@ -127,7 +127,11 @@ def test_a_vault_entry_answers_only_a_password_prompt(private_tmux, fake_bw, cap
     password, item = "s3cret-from-vault", "11111111-1111-4111-8111-111111111111"
     prompt = private_tmux.spawn("""bash -c 'read -s -p "Password: " x; echo "got:$x"; sleep 30'""")
     echoing = private_tmux.spawn("cat")
-    assert _until(lambda: tmux.find_pane(prompt).secret)
+    # Raw and silent, a "Password:" on the cursor's row, in a job: what ssh relaying a far
+    # sudo looks like. A typed password may go there; a vault fill may not.
+    relayed = private_tmux.spawn(
+        """bash -c 'set -m; bash -c "stty raw -echo; printf \\"Password: \\"; sleep 30"; true'""")
+    assert _until(lambda: tmux.find_pane(prompt).secret and tmux.find_pane(relayed).secret)
 
     server.app.state.watcher = SimpleNamespace(request_reparse=lambda p: None)
     client = TestClient(server.app)
@@ -139,6 +143,10 @@ def test_a_vault_entry_answers_only_a_password_prompt(private_tmux, fake_bw, cap
                        files=[("vault_item", (None, item))]).status_code == 200
     assert _until(lambda: f"got:{password}" in tmux.capture_pane(prompt))
     assert password not in tmux.capture_pane(echoing)
+    assert client.post(f"/api/panes/{relayed}/compose",
+                       files=[("vault_item", (None, item))]).status_code == 409
+    assert client.post(f"/api/panes/{relayed}/compose",
+                       files=[("secret", (None, "typed"))]).status_code == 200
 
     assert not any(password in " ".join(args) for args in private_tmux.argvs)
     assert password not in caplog.text

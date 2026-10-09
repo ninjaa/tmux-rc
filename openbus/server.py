@@ -1142,7 +1142,9 @@ async def _compose(pane_id: str, request: Request):
         raise HTTPException(400, "a password is printable text")  # the rest run as input
     _invalidate_input_actions(pane.id)
     if secret:
-        await asyncio.to_thread(tmux.send_secret, pane, secret)
+        # A vault fill is strict: a password the user never typed goes only to a local line
+        # reader, never a raw tty that may be a TUI or ssh relaying someone else's prompt.
+        await asyncio.to_thread(tmux.send_secret, pane, secret, strict=vault_item is not None)
     else:
         await asyncio.to_thread(_deliver_composer, pane.id, pane.pid, segments)
     _audit(request, "compose", pane_id,
