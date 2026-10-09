@@ -105,7 +105,7 @@ export function setupLiveMode({ request, session, licon, wide, report = () => {}
     fetching = true;
     try {
       const data = await request("/api/version");
-      onVersion(data.version);
+      onVersion(data.version, data);
       if (!run) { menu = data.live_models || [{ label: "Default", value: "" }]; renderModels(); }
       // Each button only with something to start: the mic needs a voice row (a keyless one
       // still says what to set), Chat a usable chat model.

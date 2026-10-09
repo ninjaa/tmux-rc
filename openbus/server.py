@@ -73,7 +73,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from PIL import Image  # noqa: E402
 from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
 
-from . import telemetry, tmux  # noqa: E402
+from . import telemetry, tmux, vault  # noqa: E402
 from .config import json_list  # noqa: E402
 from .history import History, default_path  # noqa: E402
 from .llm import last_error, usage_totals  # noqa: E402
@@ -470,7 +470,8 @@ def get_version():
     keyless = [{"label": m.label, "hint": m.unavailable, "text": m.text, "unavailable": True}
                for m in live_providers.models() if not m.available()]
     return {"version": h.hexdigest(), "live_enabled": live.enabled() and bool(offered or keyless),
-            "live_models": offered + keyless, "docs": DOCS_MOUNTED}
+            "live_models": offered + keyless, "docs": DOCS_MOUNTED,
+            "vault": vault.client() is not None}
 
 
 # How long a /api/state long-poll holds before returning unchanged (client re-holds).
@@ -1095,7 +1096,7 @@ async def _compose(pane_id: str, request: Request):
     pane = tmux.find_pane(pane_id)
     if pane is None:
         raise HTTPException(404, "pane not found")
-    segments, secret = [], None
+    segments, secret, vault_item = [], None, None
     # Multipart parsing finishes before delivery. Limits also bound the time a single
     # draft can occupy the pane lock; no client round trips happen inside that lock.
     async with request.form(max_files=16, max_fields=128, max_part_size=IMG_MAX_BYTES) as form:
@@ -1118,8 +1119,20 @@ async def _compose(pane_id: str, request: Request):
                 if len(value.encode()) > 4095:  # the tty's line, less its newline
                     raise HTTPException(413, "password too long")
                 secret = value
+            elif kind == "vault_item" and isinstance(value, str) and vault_item is None:
+                vault_item = value
             else:
                 raise HTTPException(400, "invalid composer segment")
+    # A vault entry is a secret the daemon looks up itself, so the browser only ever
+    # names it; from here on it takes the typed password's path and guards.
+    label = "secret"
+    if vault_item is not None:
+        if secret is not None or segments:
+            raise HTTPException(400, "send a draft or a secret")
+        name, secret = await _vault_password(vault_item)
+        label = f"secret (vault: {name[:60]})"
+        if len(secret.encode()) > 4095:
+            raise HTTPException(413, "password too long")
     # A password answers a no-echo prompt alone, and never reaches an audit or log
     # line: the record says only that one was sent. See tmux.send_secret. The
     # converse, refusing plain text at that prompt, is send_keys' own guard.
@@ -1133,9 +1146,35 @@ async def _compose(pane_id: str, request: Request):
     else:
         await asyncio.to_thread(_deliver_composer, pane.id, pane.pid, segments)
     _audit(request, "compose", pane_id,
-           detail="secret" if secret else f"{len(segments)} segments")
+           detail=label if secret else f"{len(segments)} segments")
     app.state.watcher.request_reparse(pane.id)
     return {"ok": True}
+
+
+def _vault() -> vault.Vault:
+    client = vault.client()
+    if client is None:
+        raise HTTPException(404, "vault not configured")
+    return client
+
+
+async def _vault_password(item_id: str) -> tuple[str, str]:
+    try:
+        return await _vault().get_password(item_id)
+    except vault.NotFoundError as error:
+        raise HTTPException(404, str(error)) from None
+    except vault.VaultError as error:
+        raise HTTPException(502, str(error)) from None
+
+
+@app.get("/api/vault/items")
+async def vault_items():
+    """Entries a password prompt can be filled from: ids, names and usernames only. The
+    password is looked up by /compose's `vault_item`, so it never reaches the browser."""
+    try:
+        return {"enabled": True, "items": await _vault().list_items()}
+    except vault.VaultError as error:
+        raise HTTPException(502, str(error)) from None
 
 
 def _deliver_composer(pane_id: str, expected_pid: str, segments: list) -> str | None:

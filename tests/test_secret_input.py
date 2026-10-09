@@ -121,3 +121,25 @@ tty.setraw(0); sys.stdin.read(1)'""")
     assert SECRET not in caplog.text
     assert "AUDIT compose" in caplog.text and "secret" in caplog.text
     assert not private_tmux.run(["list-buffers"]).strip()  # the one-shot buffer is gone
+
+
+def test_a_vault_entry_answers_only_a_password_prompt(private_tmux, fake_bw, caplog):
+    password, item = "s3cret-from-vault", "11111111-1111-4111-8111-111111111111"
+    prompt = private_tmux.spawn("""bash -c 'read -s -p "Password: " x; echo "got:$x"; sleep 30'""")
+    echoing = private_tmux.spawn("cat")
+    assert _until(lambda: tmux.find_pane(prompt).secret)
+
+    server.app.state.watcher = SimpleNamespace(request_reparse=lambda p: None)
+    client = TestClient(server.app)
+    caplog.set_level(logging.INFO)
+    # The same guard as a typed password: a pane that echoes gets nothing.
+    assert client.post(f"/api/panes/{echoing}/compose",
+                       files=[("vault_item", (None, item))]).status_code == 409
+    assert client.post(f"/api/panes/{prompt}/compose",
+                       files=[("vault_item", (None, item))]).status_code == 200
+    assert _until(lambda: f"got:{password}" in tmux.capture_pane(prompt))
+    assert password not in tmux.capture_pane(echoing)
+
+    assert not any(password in " ".join(args) for args in private_tmux.argvs)
+    assert password not in caplog.text
+    assert "secret (vault: sudo on build-box)" in caplog.text

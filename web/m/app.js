@@ -68,6 +68,7 @@ const LUCIDE = {
   unfold: '<path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>',
   fold: '<path d="m7 20 5-5 5 5M7 4l5 5 5-5"/>',
   arrowUpDown: '<path d="m21 16-4 4-4-4M17 20V4M3 8l4-4 4 4M7 4v16"/>',
+  key: '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
   bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>',
 };
 const licon = (name, size = 20) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${LUCIDE[name]}</svg>`;
@@ -106,6 +107,7 @@ const dashboardVisible = () => !active && (WIDE.matches || dashboard);
 let panes = [], active = null, view = "summary", filter = "all", loaded = false, booted = false;
 let focusPushComposer = false;
 let sort = "updated";
+let vaultEnabled = false; // /api/version: the daemon can fill a password prompt from its vault
 let sending = false, prefix = "C-b", stateController, detailController, detailId = null;
 let streamedLayout = null;
 let eventsKey = null, latestCapture = "", fontSize = 13;
@@ -928,12 +930,14 @@ function updateComposer() {
   $("reply").hidden = secret;
   $("secret").hidden = !secret;
   $("attach").hidden = secret;
+  $("vault-fill").hidden = !secret || !vaultEnabled;
   // Editability depends only on the pane existing: a non-editable div loses focus and
   // dismisses the phone keyboard on every send, and `sending` already guards re-entry.
   $("reply").contentEditable = String(available);
   $("reply").setAttribute("aria-disabled", String(!available));
   $("send").disabled = sending || !available || (secret ? !$("secret").value : !value.segments().length && !value.pendingEnter);
   $("attach").disabled = sending || !available;
+  $("vault-fill").disabled = sending || !available;
   $("keys").querySelectorAll("button").forEach((button) => { button.disabled = sending || !available; });
 }
 // Returns whether the keys were DELIVERED. Most callers ignore it; the cursor walk
@@ -997,24 +1001,30 @@ function cursorIO(id) {
 }
 // Send a draft to pane `id`: the pane's own composer and a sidebar card's Reply both come
 // through here, so they share one endpoint and one confirmation. Resolves to delivered.
-// `value` is a Composer, or the password input, whose text goes as the one "secret" field.
+// `value` is a Composer, or the password input, whose text goes as the one "secret" field,
+// or `{ vaultItem }`: an entry the daemon looks up and types itself, so its password never
+// reaches this page.
 async function compose(id, value) {
-  const secret = value === $("secret");
+  const secret = value === $("secret"), vaultItem = value?.vaultItem;
   sending = true; notice(); render();
   try {
     const form = new FormData();
-    if (secret) form.append("secret", value.value);
+    if (vaultItem) form.append("vault_item", vaultItem);
+    else if (secret) form.append("secret", value.value);
     else for (const segment of value.segments()) {
       if (segment.file) form.append("image", segment.file);
       else form.append("text", segment.text);
     }
     await request(paneUrl(id, "compose"), { method: "POST", body: form }, 45000);
     if (secret) value.value = "";
-    else { value.replace([]); value.pendingEnter = false; }
+    else if (!vaultItem) { value.replace([]); value.pendingEnter = false; }
     if (active === id) text($("draft-status"), "Sent");
     startState();
     return true;
-  } catch { notice("Delivery could not be confirmed. Draft kept; check the terminal before retrying."); return false; }
+  } catch (error) {
+    notice(vaultItem ? error.detail || "Vault fill could not be confirmed. Check the terminal before retrying." : "Delivery could not be confirmed. Draft kept; check the terminal before retrying.");
+    return false;
+  }
   finally { sending = false; render(); }
 }
 $("reply-form").onsubmit = (event) => {
@@ -1022,6 +1032,37 @@ $("reply-form").onsubmit = (event) => {
   if (!sending && !$("send").disabled) compose(active, $("secret").hidden ? draft() : $("secret"));
 };
 $("secret").oninput = updateComposer;
+// The vault picker lists names and usernames only; tapping one asks the daemon to type that
+// entry's password into the pane the picker was opened for.
+let vaultItems = [], vaultPane = null;
+function renderVault() {
+  const query = $("vault-search").value.trim().toLowerCase();
+  const shown = vaultItems.filter((item) => `${item.name} ${item.username}`.toLowerCase().includes(query));
+  $("vault-choices").replaceChildren(...shown.map((item) => {
+    const button = document.createElement("button"); button.type = "button";
+    const label = document.createElement("span");
+    const name = document.createElement("strong"); name.textContent = item.name || "(unnamed)"; label.append(name);
+    if (item.username) { const user = document.createElement("small"); user.textContent = item.username; label.append(user); }
+    button.innerHTML = licon("key"); button.append(label);
+    button.onclick = () => { $("vault-dialog").close(); compose(vaultPane, { vaultItem: item.id }); };
+    return button;
+  }));
+  if (vaultItems.length && !shown.length) text($("vault-error"), "No matching entries.");
+  else if (vaultItems.length) text($("vault-error"), "");
+}
+$("vault-fill").onclick = async () => {
+  vaultPane = active; vaultItems = [];
+  $("vault-search").value = ""; $("vault-choices").replaceChildren();
+  $("vault-dialog").showModal(); text($("vault-error"), "Unlocking vault...");
+  try {
+    // The first call logs in and unlocks, which runs the vault's KDF: allow for it.
+    vaultItems = (await request("/api/vault/items", {}, 45000)).items;
+    text($("vault-error"), vaultItems.length ? "" : "No entries with a password in this vault.");
+    renderVault();
+  } catch (error) { text($("vault-error"), error.detail || "Could not load the vault. Close and try again."); }
+};
+$("vault-search").oninput = renderVault;
+$("close-vault").onclick = () => $("vault-dialog").close();
 // Enter SENDS, Shift+Enter inserts a newline — the standard chat-composer contract.
 // It shipped requiring Cmd/Ctrl+Enter, a shortcut
 // a phone keyboard cannot type at all, so the most obvious way to send did nothing and
@@ -1037,7 +1078,7 @@ $("secret").oninput = updateComposer;
 enterSubmits($("reply-form"), (target) => $("reply").contains(target));
 bindAttach($("attach"), $("image-file"), () => active && !sending ? draft() : null);
 
-for (const [id, name] of Object.entries({ collapse: "panel", "dash-nav": "dashboard", back: "back", theme: "sun", docs: "book", "close-pane": "x", "pane-menu-button": "ellipsis", "more-button": "ellipsis", sort: "arrowUpDown", "new-window": "plus", "search-icon": "search", "clear-search": "x", send: "up", attach: "paperclip", keyboard: "keyboard", "close-launch": "x", "zoom-in": "plus", "zoom-out": "minus", tail: "down" })) icon(id, name);
+for (const [id, name] of Object.entries({ collapse: "panel", "dash-nav": "dashboard", back: "back", theme: "sun", docs: "book", "close-pane": "x", "pane-menu-button": "ellipsis", "more-button": "ellipsis", sort: "arrowUpDown", "new-window": "plus", "search-icon": "search", "clear-search": "x", send: "up", attach: "paperclip", "vault-fill": "key", "close-vault": "x", keyboard: "keyboard", "close-launch": "x", "zoom-in": "plus", "zoom-out": "minus", tail: "down" })) icon(id, name);
 for (const [id, label, glyph] of [["all", "All", "layers"], ["running", "Running", "terminal"], ["recent", "Recent", "clock"], ["attention", "Needs you", "alert"]]) {
   html($(`${id}-tab`), `<span class="nav-icon">${licon(glyph)}<span id="${id}-count" class="count">0</span></span><span>${label}</span>`);
 }
@@ -1346,7 +1387,8 @@ let assetVersion = null;
 function hasDrafts() {
   return [...drafts.values(), ...renderSidebar.drafts.values()].some((value) => value.pendingEnter || value.files.size || value.editor.textContent.length);
 }
-function observeVersion(version) {
+function observeVersion(version, data) {
+  if (vaultEnabled !== (data?.vault === true)) { vaultEnabled = !vaultEnabled; updateComposer(); }
   if (typeof version !== "string" || !version) return;
   if (assetVersion === null) assetVersion = version;
   const changed = version !== assetVersion;

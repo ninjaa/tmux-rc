@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import pytest
 
-from openbus import tmux
+from openbus import tmux, vault
 
 
 @pytest.fixture(autouse=True)
@@ -22,3 +24,20 @@ def _no_enter_settle(monkeypatch):
     monkeypatch.setattr(tmux, "pane_pid", lambda pane_id: "1234")
     monkeypatch.setattr(tmux, "at_password_prompt", lambda pane_id: False)
     monkeypatch.setattr(tmux, "_last_paste", {})
+
+
+@pytest.fixture
+def fake_bw(tmp_path, monkeypatch):
+    """The vault feature, configured against tests/fake_bw.py. Yields its data dir, where
+    calls.jsonl records each call's argv and BW_SESSION."""
+    password_file = tmp_path / "master"
+    password_file.write_text("correct horse battery staple\n")
+    password_file.chmod(0o600)
+    appdata = tmp_path / "bw"
+    monkeypatch.setenv("TMUXRC_VAULT_SERVER", "https://vault.example.org")
+    monkeypatch.setenv("TMUXRC_VAULT_EMAIL", "tmux-rc@example.org")
+    monkeypatch.setenv("TMUXRC_VAULT_PASSWORD_FILE", str(password_file))
+    monkeypatch.setenv("TMUXRC_VAULT_BW", str(Path(__file__).with_name("fake_bw.py")))
+    monkeypatch.setenv("TMUXRC_VAULT_APPDATA", str(appdata))
+    monkeypatch.setattr(vault, "_client", None)
+    return appdata

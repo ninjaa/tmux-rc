@@ -255,6 +255,8 @@ dialog::backdrop { background: #0008; }
 dialog label { display: block; margin: 16px 0 6px; font-size: 13px; color: var(--muted); }
 dialog select { width: 100%; min-height: 48px; border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: var(--bg); font-size: 16px; }
 #launch-error { color: var(--red); margin-top: 12px; font-size: 13px; }
+#vault-search { width: 100%; min-height: 48px; border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: var(--bg); color: inherit; font-size: 16px; }
+#vault-error { color: var(--muted); margin-top: 12px; font-size: 13px; }
 #live-mode.active { color: var(--red); background: var(--raised); box-shadow: inset 0 0 0 1px var(--red); }
 #chat.active { color: var(--accent); background: var(--accent-bg); box-shadow: inset 0 0 0 1px var(--accent); }
 #push.active { color: var(--accent); background: var(--accent-bg); }

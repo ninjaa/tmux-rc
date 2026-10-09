@@ -17,4 +17,5 @@ These pages cover the ways to do that safely.
 {{< cards >}}
   {{< card link="other-tunnels/" title="Other tunnels" subtitle="Tailscale (prefer this) and ngrok — what to know before you pick one." >}}
   {{< card link="cloudflare-tunnel/" title="Cloudflare Tunnel + Access" subtitle="A public hostname with a real login in front of it. Step order is the security control." >}}
+  {{< card link="vault/" title="Vault fill" subtitle="Answer password prompts from a dedicated Vaultwarden account; the phone sees entry names only." >}}
 {{< /cards >}}
