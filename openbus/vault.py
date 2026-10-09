@@ -68,7 +68,7 @@ class Vault:
         self._names: dict[str, str] = {}  # fillable entries from the last list: id -> name
 
     async def _run(self, *args: str, session: bool = True, wait_s: float = TIMEOUT_S) -> str:
-        env = {**os.environ, "BITWARDEN_APPDATADIR": self.appdata, "BW_NOINTERACTION": "true"}
+        env = {**os.environ, "BITWARDENCLI_APPDATA_DIR": self.appdata, "BW_NOINTERACTION": "true"}
         env.pop("BW_SESSION", None)
         if session and self._session:
             env["BW_SESSION"] = self._session

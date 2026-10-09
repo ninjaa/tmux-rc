@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A stand-in for the Bitwarden CLI, enough of it for openbus/vault.py: status, config
 server, login/unlock with --passwordfile, sync, list items, get password, logout. State
-lives in $BITWARDEN_APPDATADIR/fake.json; every call appends its argv, BW_SESSION and pid
+lives in $BITWARDENCLI_APPDATA_DIR/fake.json; every call appends its argv, BW_SESSION and pid
 to calls.jsonl there, so a test can check what reached argv and what reached the
 environment. A test sets "sync" in the state to "fail" or "hang" to break the server."""
 
@@ -27,7 +27,7 @@ ITEMS = [
 ]
 MASTER = "correct horse battery staple"
 
-home = Path(os.environ["BITWARDEN_APPDATADIR"])
+home = Path(os.environ["BITWARDENCLI_APPDATA_DIR"])
 home.mkdir(parents=True, exist_ok=True)
 state_file = home / "fake.json"
 state = json.loads(state_file.read_text()) if state_file.exists() else {
