@@ -32,3 +32,12 @@ test("a poll that already has the new name keeps its title", () => {
   applyRename(panes, sheet, { name: "" });
   assert.equal(panes[0].title, "Agent's");
 });
+
+// Responses out of order: an older save landing after a newer name arrived leaves the newer one.
+test("a late rename doesn't overwrite a newer name", () => {
+  const panes = fleet(), first = { ...panes[1] };  // the sheet showed "" and saved "Old"
+  Object.assign(panes[1], { name: "Newer", title: "Newer" });  // a later save, already polled
+  applyRename(panes, first, { name: "Old" });
+  assert.equal(panes[1].name, "Newer");
+  assert.equal(panes[1].title, "Newer");
+});
