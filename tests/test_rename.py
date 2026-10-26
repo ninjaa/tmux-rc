@@ -67,7 +67,8 @@ def test_refuses_a_taken_session_a_stale_menu_and_unsafe_names(pane, client):
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
     # A line separator would split the listing's row as surely as a newline (splitlines).
     seps = ("\t", "\x85", "\u2028", "\u2029", "\x00", "\x1b")
-    for bad in ({"session": "a:b"}, {"session": "a.b"}, {"session": " "},
+    # A trailing ';' ends a tmux command: every target built from the session would need escaping.
+    for bad in ({"session": "a:b"}, {"session": "a.b"}, {"session": " "}, {"session": "a;"},
                 *({"name": f"a{c}b"} for c in seps), *({"session": f"a{c}b"} for c in seps)):
         assert client.post(f"/api/panes/{pane}/rename", json=bad).status_code == 422
     assert listed(pane).session == "old" and listed(pane).name == ""
@@ -80,16 +81,17 @@ def test_a_taken_session_saves_neither_name(pane, client):
 
 
 def test_names_tmux_would_read_as_an_option_or_a_command_end(pane, client):
-    for session, name in (("-archive", "wip;"), ("release;", "-x")):
+    for session, name in (("-archive", "wip;"), ("release", "-x")):
         body = {"name": name, "session": session}
         assert client.post(f"/api/panes/{pane}/rename", json=body).status_code == 200
         assert listed(pane).session == session and listed(pane).name == name
 
 
 def test_a_single_pane_watch_by_session_name_keeps_its_session(pane, client, monkeypatch):
-    monkeypatch.setattr(S.app.state.watcher, "target", "old:0", raising=False)
-    assert client.post(f"/api/panes/{pane}/rename", json={"session": "new"}).status_code == 409
-    assert listed(pane).session == "old"
+    for target in ("old:0", "atlas:0"):  # a session name, or a label derived from the cwd
+        monkeypatch.setattr(S.app.state.watcher, "target", target, raising=False)
+        assert client.post(f"/api/panes/{pane}/rename", json={"session": "new"}).status_code == 409
+        assert listed(pane).session == "old"
     monkeypatch.setattr(S.app.state.watcher, "target", pane)  # by id: it survives the rename
     assert client.post(f"/api/panes/{pane}/rename", json={"session": "new"}).status_code == 200
 
