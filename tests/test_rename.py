@@ -33,8 +33,8 @@ def pane(monkeypatch):
 
 @pytest.fixture
 def client(monkeypatch):
-    woken = []
-    monkeypatch.setattr(S.app.state, "watcher", SimpleNamespace(request_reparse=woken.append),
+    woken = []  # a rename only wakes the watcher: names aren't on screen, nothing to re-parse
+    monkeypatch.setattr(S.app.state, "watcher", SimpleNamespace(wake=lambda: woken.append("tick")),
                         raising=False)
     monkeypatch.setattr(S, "_audit", lambda *a, **k: None)
     c = TestClient(S.app)
@@ -49,7 +49,7 @@ def listed(pane):
 def test_a_name_beats_the_agents_title_until_cleared(pane, client):
     birth = listed(pane).pid
     r = client.post(f"/api/panes/{pane}/rename", json={"name": "  Ship the fix ", "birth": birth})
-    assert r.json() == {"ok": True} and client.woken == [pane]
+    assert r.json() == {"ok": True} and client.woken == ["tick"]
     assert listed(pane).display_title == "Ship the fix"
     client.post(f"/api/panes/{pane}/rename", json={"name": "", "birth": birth})
     assert listed(pane).display_title == "Agent's own title"
@@ -65,6 +65,15 @@ def test_refuses_a_taken_session_a_stale_menu_and_unsafe_names(pane, client):
     stale = {"name": "x", "birth": "1"}
     assert client.post(f"/api/panes/{pane}/rename", json=stale).status_code == 409
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
-    for bad in ({"session": "a:b"}, {"session": "a.b"}, {"session": " "}, {"name": "a\tb"}):
+    # A line separator would split the listing's row as surely as a newline (splitlines).
+    seps = ("\t", "\x85", "\u2028", "\u2029")
+    for bad in ({"session": "a:b"}, {"session": "a.b"}, {"session": " "},
+                *({"name": f"a{c}b"} for c in seps), *({"session": f"a{c}b"} for c in seps)):
         assert client.post(f"/api/panes/{pane}/rename", json=bad).status_code == 422
     assert listed(pane).session == "old" and listed(pane).name == ""
+
+
+def test_a_taken_session_saves_neither_name(pane, client):
+    r = client.post(f"/api/panes/{pane}/rename", json={"name": "Mine", "session": "taken"})
+    assert r.status_code == 409 and client.woken == []
+    assert listed(pane).name == "" and listed(pane).session == "old"

@@ -229,12 +229,16 @@ class PushAnswerBody(BaseModel):
     option_index: int = Field(ge=0)
 
 
+# Control characters and line separators would split a pane listing's row (tmux._PANE_FMT
+# joins fields with tabs, list_panes splits rows with splitlines): refused, not kept.
+_ONE_ROW = r"\p{Cc}\p{Zl}\p{Zp}"
+
+
 class RenameBody(BaseModel):
     # None leaves that name alone; a pane name of "" gives the pane back its app's title.
-    # Tabs and newlines would split a pane listing's row (tmux._PANE_FMT): refused, not kept.
-    name: str | None = Field(default=None, max_length=200, pattern=r"^[^\t\n\r]*$")
+    name: str | None = Field(default=None, max_length=200, pattern=rf"^[^{_ONE_ROW}]*$")
     session: str | None = Field(default=None, min_length=1, max_length=200,
-                                pattern=r"^[^\t\n\r:.]*[^\s:.][^\t\n\r:.]*$")
+                                pattern=rf"^[^{_ONE_ROW}:.]*[^\s:.][^{_ONE_ROW}:.]*$")
     birth: str = ""
 
 
@@ -1753,18 +1757,20 @@ def rename(pane_id: str, body: RenameBody, request: Request):
         _audit(request, "rename", pane_id, detail, outcome="rejected: the pane changed")
         raise HTTPException(404 if not pane else 409, "the pane changed")
     session = body.session and body.session.strip()
+    session = session if session != pane.session else None
+    # Refused before either name changes, so a 409 saves nothing.
+    if session and session in {p.session for p in tmux.list_panes()}:
+        _refuse(request, "rename", detail, 409, f"there is already a session {session}")
     try:
+        if session:
+            tmux.rename_session(pane.session, session)
         if body.name is not None:
             tmux.rename_pane(pane.id, body.name.strip())
-        if session and session != pane.session:
-            if session in {p.session for p in tmux.list_panes()}:
-                _refuse(request, "rename", detail, 409, f"there is already a session {session}")
-            tmux.rename_session(pane.session, session)
     except subprocess.CalledProcessError as e:
         _audit(request, "rename", pane_id, detail, outcome=f"error: tmux rc {e.returncode}")
         raise _pane_err(e) from None
     _audit(request, "rename", pane_id, detail)
-    app.state.watcher.request_reparse(pane.id)  # the next tick restamps every pane's names
+    app.state.watcher.wake()  # names aren't on screen: a tick restamps them, no re-parse
     return {"ok": True}
 
 

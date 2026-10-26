@@ -6,7 +6,7 @@ import { Composer, bindAttach, enterSubmits } from "/m/composer.js";
 import { answerBody, pickCursorRow, STALE, UNTAKEN } from "/cursor-pick.js";
 import { sendPresence, setupPush, stateUrl } from "/push.js";
 import { paneLinks, askLink } from "/pr-links.js";
-import { needsYou, activityLabel, activityClass, markWorking, isRecent, matchesFilter, matchesSearch, newestFirst, stillOnPane, paneName, paneActivity, paneHeadline, panePending, markLine, paneMeta, questionItems, records, itemDone, awaitingLaunch, LAUNCH_GRACE_MS, age, since, esc, markEnding, noteSessions, oneSession, sessionOf } from "/m/pane-model.js";
+import { needsYou, activityLabel, activityClass, markWorking, isRecent, matchesFilter, matchesSearch, newestFirst, stillOnPane, paneName, paneActivity, paneHeadline, panePending, markLine, paneMeta, questionItems, records, itemDone, awaitingLaunch, LAUNCH_GRACE_MS, age, since, esc, markEnding, noteSessions, oneSession, sessionOf, applyRename } from "/m/pane-model.js";
 import { parseHash, formatHash, historyMode, PAGES, scratchUrl } from "/m/url-state.js";
 import { overscroll, overscrollState, RESIST_PX, IDLE_MS } from "/m/overscroll.js";
 import { dragToDismiss } from "/m/drag-dismiss.js";
@@ -2455,11 +2455,7 @@ $("rename-form").onsubmit = async (e) => {
   try {
     await post(paneUrl(pane.pane_id, "rename"), body);
     $("rename-dialog").close();
-    // Show it now rather than on the next poll; that poll then says the same.
-    for (const p of panes) {
-      if (p.pane_id === pane.pane_id && "name" in body) { p.name = name; p.title = name || p.title; }
-      if (body.session && p.session === pane.session) p.session = body.session;
-    }
+    applyRename(panes, pane, body);
     render();
   } catch (error) {
     text($("rename-error"), `Could not rename: ${error.detail?.message || error.detail || error.message}`);

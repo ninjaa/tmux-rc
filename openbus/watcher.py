@@ -603,14 +603,19 @@ class Watcher:
         thread; setting an asyncio.Event from another thread is safe via the loop's
         thread-safe scheduling."""
         self._force_parse.add(pane_id)
+        self.wake()
+
+    def wake(self) -> None:
+        """Run a full tick now, re-parsing only what changed on screen: it restamps every
+        pane's names (_stamp_identity), so a rename shows without an LLM call."""
         loop = getattr(self, "_evloop", None)
         if loop is not None:
             try:
                 loop.call_soon_threadsafe(self._wake.set)
             except RuntimeError:
                 # Loop already closed (shutdown). The tmux send has already succeeded, so
-                # don't fail the request over a wake we no longer need — the pane id stays
-                # in _force_parse and a running loop would pick it up on its next tick.
+                # don't fail the request over a wake we no longer need — a pane id stays
+                # in _force_parse (if forced) for a running loop's next tick.
                 pass
 
     def drop_panes(self, pane_ids: set[str]) -> None:
