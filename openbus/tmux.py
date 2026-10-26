@@ -520,15 +520,22 @@ def kill_window(pane_id: str, pid: str | None = None) -> list[tuple[str, str]]:
     return [tuple(line.split(" ", 1)) for line in out.splitlines() if line not in ("", "kept")]
 
 
+def _literal(arg: str) -> str:
+    """tmux ends a command at an argument ending in ';' (after `--` too): escape that ';' as
+    tmux's literal one."""
+    return arg[:-1] + "\\;" if arg.endswith(";") else arg
+
+
 def rename_pane(pane_id: str, name: str) -> None:
     """Name the pane (Pane.display_title), or with "" give it back to its app's title."""
-    _run(["set-option", "-p", "-t", pane_id, NAME, name] if name
+    _run(["set-option", "-p", "-t", pane_id, "--", NAME, _literal(name)] if name
          else ["set-option", "-pu", "-t", pane_id, NAME])
 
 
 def rename_session(session: str, name: str) -> None:
-    """Rename a tmux session, matched exactly (`=`): a bare name is a prefix match."""
-    _run(["rename-session", "-t", f"={session}", name])
+    """Rename a tmux session, matched exactly (`=`): a bare name is a prefix match. `--` keeps
+    a name like "-archive" from reading as an option."""
+    _run(["rename-session", "-t", _literal(f"={session}"), "--", _literal(name)])
 
 
 def server_path() -> str | None:
@@ -569,10 +576,8 @@ def new_window(session: str, name: str, command: str | list[str], cwd: str | Non
     `cwd` overrides it for a command that must start somewhere specific (a resumed
     agent session only exists in the directory it was started in).
     A `command` given as a list is executed directly by tmux, with no shell, so its
-    arguments are never parsed as shell syntax. tmux still ends a command at an argument
-    ending in ';' (after `--` too), so that ';' goes escaped as tmux's literal one."""
-    argv = [a[:-1] + "\\;" if a.endswith(";") else a
-            for a in (command if isinstance(command, list) else [command])]
+    arguments are never parsed as shell syntax, but each still goes through _literal."""
+    argv = [_literal(a) for a in (command if isinstance(command, list) else [command])]
     return _run(
         ["new-window", "-d", "-P", "-F", "#{pane_id}", "-c", cwd or "#{session_path}",
          "-t", f"{session}:", "-n", name, "--", *argv]

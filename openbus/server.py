@@ -238,7 +238,7 @@ class RenameBody(BaseModel):
     # None leaves that name alone; a pane name of "" gives the pane back its app's title.
     name: str | None = Field(default=None, max_length=200, pattern=rf"^[^{_ONE_ROW}]*$")
     session: str | None = Field(default=None, min_length=1, max_length=200,
-                                pattern=rf"^[^{_ONE_ROW}:.]*[^\s:.][^{_ONE_ROW}:.]*$")
+                                pattern=rf"^[^{_ONE_ROW}:.]*[^\s{_ONE_ROW}:.][^{_ONE_ROW}:.]*$")
     birth: str = ""
 
 
@@ -1761,6 +1761,10 @@ def rename(pane_id: str, body: RenameBody, request: Request):
     # Refused before either name changes, so a 409 saves nothing.
     if session and session in {p.session for p in tmux.list_panes()}:
         _refuse(request, "rename", detail, 409, f"there is already a session {session}")
+    # A single-pane watch by name (TMUXRC_TARGET=work:0) would lose its pane to the rename.
+    target = getattr(app.state.watcher, "target", None) or ""
+    if session and target.split(":")[0].lstrip("=") == pane.session:
+        _refuse(request, "rename", detail, 409, f"TMUXRC_TARGET names the session {pane.session}")
     try:
         if session:
             tmux.rename_session(pane.session, session)
