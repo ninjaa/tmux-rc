@@ -41,3 +41,12 @@ test("a late rename doesn't overwrite a newer name", () => {
   assert.equal(panes[1].name, "Newer");
   assert.equal(panes[1].title, "Newer");
 });
+
+// The response lands after a poll showed a new pane under the same %N: that pane is left alone.
+test("a late rename leaves a replacement pane alone", () => {
+  const panes = fleet(), sheet = { ...panes[0], birth: "1" };
+  Object.assign(panes[0], { birth: "2" });  // the replacement, with the old one's name
+  applyRename(panes, sheet, { name: "Gone", session: "moved" });
+  assert.equal(panes[0].name, "Mine");
+  assert.deepEqual(panes.map((p) => p.session), ["old", "old", "other"]);
+});

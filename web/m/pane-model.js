@@ -143,8 +143,10 @@ export function paneName(pane) {
 // the sheet showed it, read first: it may be one of `panes`, which the loop changes. A name changes
 // only where the pane still has the one the sheet showed, as a session moves only the panes still in
 // it: a poll (or a later rename) that got there first is newer, and its title is the daemon's. A
-// cleared name leaves the title to that poll (only the daemon knows the app's own title).
-export function applyRename(panes, { pane_id, session, name = "" }, body) {
+// cleared name leaves the title to that poll (only the daemon knows the app's own title). A pane
+// replaced under the same %N (a new birth) is the poll's to show, and so are its siblings.
+export function applyRename(panes, { pane_id, birth, session, name = "" }, body) {
+  if (!panes.some((p) => p.pane_id === pane_id && p.birth === birth)) return;
   for (const p of panes) {
     if (p.pane_id === pane_id && "name" in body && (p.name || "") === name) { p.name = body.name; p.title = body.name || null; }
     if (body.session && p.session === session) p.session = body.session;
