@@ -67,8 +67,9 @@ def test_refuses_a_taken_session_a_stale_menu_and_unsafe_names(pane, client):
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
     # A line separator would split the listing's row as surely as a newline (splitlines).
     seps = ("\t", "\x85", "\u2028", "\u2029", "\x00", "\x1b")
-    # A trailing ';' ends a tmux command: every target built from the session would need escaping.
-    for bad in ({"session": "a:b"}, {"session": "a.b"}, {"session": " "}, {"session": "a;"},
+    # A trailing ';' ends a tmux command, and a leading '=' turns =name into another session's
+    # exact target: every target built from the session would need escaping.
+    for bad in (*({"session": s} for s in ("a:b", "a.b", " ", "a;", " =taken")),
                 *({"name": f"a{c}b"} for c in seps), *({"session": f"a{c}b"} for c in seps)):
         assert client.post(f"/api/panes/{pane}/rename", json=bad).status_code == 422
     assert listed(pane).session == "old" and listed(pane).name == ""

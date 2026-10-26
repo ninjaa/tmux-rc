@@ -236,10 +236,11 @@ _ONE_ROW = r"\p{Cc}\p{Zl}\p{Zp}"
 
 class RenameBody(BaseModel):
     # None leaves that name alone; a pane name of "" gives the pane back its app's title. A
-    # session also refuses ':' and '.', which address panes, and ';', which ends a tmux command.
+    # session also refuses ':' and '.', which address panes, ';', which ends a tmux command,
+    # and a leading '=', which makes a target (=name) match a different session exactly.
     name: str | None = Field(default=None, max_length=200, pattern=rf"^[^{_ONE_ROW}]*$")
     session: str | None = Field(default=None, min_length=1, max_length=200,
-                                pattern=rf"^[^{_ONE_ROW}:.;]*[^\s{_ONE_ROW}:.;][^{_ONE_ROW}:.;]*$")
+                                pattern=rf"^\s*[^\s{_ONE_ROW}:.;=][^{_ONE_ROW}:.;]*$")
     birth: str = ""
 
 
