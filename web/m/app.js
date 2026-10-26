@@ -2447,8 +2447,13 @@ $("rename-pane").onclick = () => {
   $("rename-dialog").showModal();
   $("pane-label").select();
 };
+// What the daemon takes for a session (server.py RenameBody), said as soon as the field holds anything else.
+const SESSION_HINT = "A session name is letters, digits, spaces, _ and -, starting with a letter or digit.";
+const sessionOk = () => !$("session-label").validity.patternMismatch;
+$("session-label").oninput = () => text($("rename-error"), sessionOk() ? "" : SESSION_HINT);
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
+  if (!sessionOk()) return text($("rename-error"), SESSION_HINT);
   const { _pane: pane, _open: open } = e.target, name = $("pane-label").value.trim(), session = $("session-label").value.trim();
   const mine = () => e.target._open === open;
   const body = { birth: pane.birth ?? "" };

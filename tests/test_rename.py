@@ -55,37 +55,39 @@ def test_a_name_beats_the_agents_title_until_cleared(pane, client):
     assert listed(pane).display_title == "Agent's own title"
 
 
-def test_renames_the_session(pane, client):
-    assert client.post(f"/api/panes/{pane}/rename", json={"session": "new"}).status_code == 200
-    assert listed(pane).session == "new"
-
-
-def test_refuses_a_taken_session_a_stale_menu_and_unsafe_names(pane, client):
+def test_refuses_a_taken_session_and_a_stale_menu(pane, client):
     assert client.post(f"/api/panes/{pane}/rename", json={"session": "taken"}).status_code == 409
     stale = {"name": "x", "birth": "1"}
     assert client.post(f"/api/panes/{pane}/rename", json=stale).status_code == 409
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
-    # A line separator would split the listing's row as surely as a newline (splitlines).
-    seps = ("\t", "\x85", "\u2028", "\u2029", "\x00", "\x1b")
-    # A trailing ';' ends a tmux command, and a leading '=' turns =name into another session's
-    # exact target: every target built from the session would need escaping.
-    for bad in (*({"session": s} for s in ("a:b", "a.b", " ", "a;", " =taken")),
-                *({"name": f"a{c}b"} for c in seps), *({"session": f"a{c}b"} for c in seps)):
-        assert client.post(f"/api/panes/{pane}/rename", json=bad).status_code == 422
     assert listed(pane).session == "old" and listed(pane).name == ""
+
+
+# (field, sent, kept; None = refused). A session is an allowlist: tmux parses it in every target
+# built from it. A pane name is free text but one listing row: no control characters or line
+# separators, which would split the row (tab-joined fields, splitlines).
+NAMES = [
+    ("session", "new", "new"), ("session", " Release 2 ", "Release 2"),
+    ("session", "a_b-c", "a_b-c"),
+    ("session", "x" * 64, "x" * 64), ("session", "x" * 65, None), ("session", " ", None),
+    *(("session", bad, None) for bad in ("a:b", "a.b", "a;", "=taken", "-archive", "_a", "café",
+                                         "a\tb", "a\x00b", "a\u2028b")),
+    ("name", "wip;", "wip;"), ("name", "-x", "-x"), ("name", "Ship: the fix.", "Ship: the fix."),
+    *(("name", f"a{c}b", None) for c in ("\t", "\x85", "\u2028", "\u2029", "\x00", "\x1b")),
+]
+
+
+@pytest.mark.parametrize(("field", "sent", "kept"), NAMES)
+def test_accepted_and_refused_names(pane, client, field, sent, kept):
+    r = client.post(f"/api/panes/{pane}/rename", json={field: sent})
+    assert r.status_code == (200 if kept else 422)
+    assert getattr(listed(pane), field) == (kept or {"session": "old", "name": ""}[field])
 
 
 def test_a_taken_session_saves_neither_name(pane, client):
     r = client.post(f"/api/panes/{pane}/rename", json={"name": "Mine", "session": "taken"})
     assert r.status_code == 409 and client.woken == []
     assert listed(pane).name == "" and listed(pane).session == "old"
-
-
-def test_names_tmux_would_read_as_an_option_or_a_command_end(pane, client):
-    for session, name in (("-archive", "wip;"), ("release", "-x")):
-        body = {"name": name, "session": session}
-        assert client.post(f"/api/panes/{pane}/rename", json=body).status_code == 200
-        assert listed(pane).session == session and listed(pane).name == name
 
 
 def test_a_single_pane_watch_by_session_name_keeps_its_session(pane, client, monkeypatch):

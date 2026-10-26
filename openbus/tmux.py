@@ -533,9 +533,8 @@ def rename_pane(pane_id: str, name: str) -> None:
 
 
 def rename_session(session: str, name: str) -> None:
-    """Rename a tmux session, matched exactly (`=`): a bare name is a prefix match. `--` keeps
-    a name like "-archive" from reading as an option."""
-    _run(["rename-session", "-t", _literal(f"={session}"), "--", name])
+    """Rename a tmux session, matched exactly (`=`): a bare name is a prefix match."""
+    _run(["rename-session", "-t", _literal(f"={session}"), name])
 
 
 def server_path() -> str | None:

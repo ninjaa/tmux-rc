@@ -229,18 +229,15 @@ class PushAnswerBody(BaseModel):
     option_index: int = Field(ge=0)
 
 
-# Control characters and line separators would split a pane listing's row (tmux._PANE_FMT
-# joins fields with tabs, list_panes splits rows with splitlines): refused, not kept.
-_ONE_ROW = r"\p{Cc}\p{Zl}\p{Zp}"
-
-
 class RenameBody(BaseModel):
-    # None leaves that name alone; a pane name of "" gives the pane back its app's title. A
-    # session also refuses ':' and '.', which address panes, ';', which ends a tmux command,
-    # and a leading '=', which makes a target (=name) match a different session exactly.
-    name: str | None = Field(default=None, max_length=200, pattern=rf"^[^{_ONE_ROW}]*$")
-    session: str | None = Field(default=None, min_length=1, max_length=200,
-                                pattern=rf"^\s*[^\s{_ONE_ROW}:.;=][^{_ONE_ROW}:.;]*$")
+    # Trimmed first. None leaves that name alone; a pane name of "" gives the pane back its
+    # app's title. A pane name is free text but one listing row (tmux._PANE_FMT joins fields
+    # with tabs, list_panes splits rows with splitlines): no control characters or line
+    # separators. A session name, which tmux parses in every target built from it, is an
+    # allowlist instead of a list of what tmux reads specially (web/m/app.js SESSION_HINT).
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str | None = Field(default=None, max_length=200, pattern=r"^[^\p{Cc}\p{Zl}\p{Zp}]*$")
+    session: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$")
     birth: str = ""
 
 
@@ -1750,16 +1747,14 @@ def close_window(pane_id: str, request: Request, birth: str | None = None):
 @app.post("/api/panes/{pane_id}/rename")
 def rename(pane_id: str, body: RenameBody, request: Request):
     """Rename the pane, its tmux session, or both: names go stale as the work moves on. The
-    pane's name is kept in tmux (tmux.rename_pane), so it outlives a daemon restart. tmux
-    itself refuses ':' and '.' in a session name, which address panes. `birth` refuses a
-    newer pane under the menu's %N."""
+    pane's name is kept in tmux (tmux.rename_pane), so it outlives a daemon restart. `birth`
+    refuses a newer pane under the menu's %N."""
     detail = f"name={body.name!r} session={body.session!r}"[:300]
     pane = tmux.find_pane(pane_id)
     if not pane or (body.birth and pane.pid != body.birth):
         _audit(request, "rename", pane_id, detail, outcome="rejected: the pane changed")
         raise HTTPException(404 if not pane else 409, "the pane changed")
-    session = body.session and body.session.strip()
-    session = session if session != pane.session else None
+    session = body.session if body.session != pane.session else None
     # Refused before either name changes, so a 409 saves nothing.
     if session and session in {p.session for p in tmux.list_panes()}:
         _refuse(request, "rename", detail, 409, f"there is already a session {session}")
@@ -1772,7 +1767,7 @@ def rename(pane_id: str, body: RenameBody, request: Request):
         if session:
             tmux.rename_session(pane.session, session)
         if body.name is not None:
-            tmux.rename_pane(pane.id, body.name.strip())
+            tmux.rename_pane(pane.id, body.name)
     except subprocess.CalledProcessError as e:
         _audit(request, "rename", pane_id, detail, outcome=f"error: tmux rc {e.returncode}")
         raise _pane_err(e) from None
