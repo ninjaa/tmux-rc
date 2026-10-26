@@ -2447,9 +2447,10 @@ $("rename-pane").onclick = () => {
   $("rename-dialog").showModal();
   $("pane-label").select();
 };
-// What the daemon takes for a session (server.py RenameBody), said as soon as the field holds anything else.
+// What the daemon takes for a new session name (server.py RenameBody), said as soon as the field holds
+// anything else. The session's own name, made outside tmux-rc, may not fit, and is never sent unchanged.
 const SESSION_HINT = "A session name is letters, digits, spaces, _ and -, starting with a letter or digit.";
-const sessionOk = () => !$("session-label").validity.patternMismatch;
+const sessionOk = () => !$("session-label").validity.patternMismatch || $("session-label").value.trim() === $("rename-form")._pane.session;
 $("session-label").oninput = () => text($("rename-error"), sessionOk() ? "" : SESSION_HINT);
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
