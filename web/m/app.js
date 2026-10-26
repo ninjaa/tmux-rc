@@ -2437,7 +2437,7 @@ $("rename-pane").onclick = () => {
   const pane = panes.find((p) => p.pane_id === active);
   if (!pane) return;
   const form = $("rename-form");
-  form._pane = pane;
+  form._pane = { ...pane }; // as shown now: a late save's applyRename must not move what this sheet compares to
   form._open = {}; // this opening: a save still pending from an earlier one leaves its sheet alone
   $("rename-save").disabled = false;
   $("pane-label").value = pane.name || "";
@@ -2451,8 +2451,8 @@ $("rename-pane").onclick = () => {
 // anything else. The session's own name, made outside tmux-rc, may not fit, and is never sent unchanged.
 const SESSION_HINT = "A session name is letters, digits, spaces, _ and -, starting with a letter or digit.";
 // Untouched means the raw field: a session named "old " stays put when only the title changes.
-const sessionTouched = () => $("session-label").value !== $("rename-form")._pane.session;
-const sessionOk = () => !sessionTouched() || !$("session-label").validity.patternMismatch;
+const sessionTouched = () => $("session-label").value !== ($("rename-form")._pane.session || "");
+const sessionOk = () => !sessionTouched() || (!!$("session-label").value.trim() && !$("session-label").validity.patternMismatch);
 $("session-label").oninput = () => text($("rename-error"), sessionOk() ? "" : SESSION_HINT);
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
@@ -2461,7 +2461,7 @@ $("rename-form").onsubmit = async (e) => {
   const mine = () => e.target._open === open;
   const body = { birth: pane.birth ?? "" };
   if (name !== (pane.name || "")) body.name = name;
-  if (session && sessionTouched()) body.session = session;
+  if (sessionTouched()) body.session = session;
   if (!("name" in body || "session" in body)) return $("rename-dialog").close();
   $("rename-save").disabled = true;
   try {
