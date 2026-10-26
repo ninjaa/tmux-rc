@@ -2429,6 +2429,7 @@ $("review-layout-picker").querySelector("summary").insertAdjacentHTML("afterbegi
 html($("kill-pane"), `${licon("power", 18)}<span>Kill window</span>`);
 // Rename: the pane's own name (kept in tmux; it beats the title its agent sets, and empty
 // gives that back) and its tmux session's, both of which go stale as the work moves on.
+// No "name" in its fields' ids or labels: iOS takes such a field for a person's and offers a contact.
 html($("rename-pane"), `${licon("pencil", 18)}<span>Rename…</span>`);
 $("close-rename").onclick = () => $("rename-dialog").close();
 $("rename-pane").onclick = () => {
@@ -2437,16 +2438,16 @@ $("rename-pane").onclick = () => {
   if (!pane) return;
   const form = $("rename-form");
   form._pane = pane;
-  $("rename-name").value = pane.name || "";
-  $("rename-name").placeholder = pane.name ? "" : paneName(pane);
-  $("rename-session").value = pane.session || "";
+  $("pane-label").value = pane.name || "";
+  $("pane-label").placeholder = pane.name ? "" : paneName(pane);
+  $("session-label").value = pane.session || "";
   text($("rename-error"), "");
   $("rename-dialog").showModal();
-  $("rename-name").select();
+  $("pane-label").select();
 };
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
-  const pane = e.target._pane, name = $("rename-name").value.trim(), session = $("rename-session").value.trim();
+  const pane = e.target._pane, name = $("pane-label").value.trim(), session = $("session-label").value.trim();
   const body = { birth: pane.birth ?? "" };
   if (name !== (pane.name || "")) body.name = name;
   if (session && session !== pane.session) body.session = session;
