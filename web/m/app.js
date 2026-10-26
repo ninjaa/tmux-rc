@@ -2438,6 +2438,8 @@ $("rename-pane").onclick = () => {
   if (!pane) return;
   const form = $("rename-form");
   form._pane = pane;
+  form._open = {}; // this opening: a save still pending from an earlier one leaves its sheet alone
+  $("rename-save").disabled = false;
   $("pane-label").value = pane.name || "";
   $("pane-label").placeholder = pane.name ? "" : paneName(pane);
   $("session-label").value = pane.session || "";
@@ -2447,7 +2449,8 @@ $("rename-pane").onclick = () => {
 };
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
-  const pane = e.target._pane, name = $("pane-label").value.trim(), session = $("session-label").value.trim();
+  const { _pane: pane, _open: open } = e.target, name = $("pane-label").value.trim(), session = $("session-label").value.trim();
+  const mine = () => e.target._open === open;
   const body = { birth: pane.birth ?? "" };
   if (name !== (pane.name || "")) body.name = name;
   if (session && session !== pane.session) body.session = session;
@@ -2455,12 +2458,12 @@ $("rename-form").onsubmit = async (e) => {
   $("rename-save").disabled = true;
   try {
     await post(paneUrl(pane.pane_id, "rename"), body);
-    $("rename-dialog").close();
+    if (mine()) $("rename-dialog").close();
     applyRename(panes, pane, body);
     render();
   } catch (error) {
-    text($("rename-error"), `Could not rename: ${error.detail?.message || error.detail || error.message}`);
-  } finally { $("rename-save").disabled = false; }
+    if (mine()) text($("rename-error"), `Could not rename: ${error.detail?.message || error.detail || error.message}`);
+  } finally { if (mine()) $("rename-save").disabled = false; }
 };
 // `birth` is the incarnation the menu or sheet was drawn for: a newer pane under its %N is refused.
 async function killWindow(pane, birth) {
