@@ -24,3 +24,11 @@ test("clearing a name drops it from the title", () => {
   applyRename(panes, panes[1], { name: "Ship it" });
   assert.equal(panes[1].title, "Ship it");
 });
+
+// The poll can land before the rename's response: its restored title stands.
+test("a poll that already has the new name keeps its title", () => {
+  const panes = fleet(), sheet = { ...panes[0] };
+  Object.assign(panes[0], { name: "", title: "Agent's" });  // the poll, ahead of the POST
+  applyRename(panes, sheet, { name: "" });
+  assert.equal(panes[0].title, "Agent's");
+});

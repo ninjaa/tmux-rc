@@ -142,9 +142,10 @@ export function paneName(pane) {
 // A rename shown now rather than on the next poll, which then says the same. The pane's id and
 // old session are read first: `pane` may be one of `panes`, which the loop changes. A cleared
 // name leaves the title to that poll (only the daemon knows the app's own title), its label until then.
+// A poll that already brought the new name is left alone: its title is the daemon's.
 export function applyRename(panes, { pane_id, session }, body) {
   for (const p of panes) {
-    if (p.pane_id === pane_id && "name" in body) { p.name = body.name; p.title = body.name || null; }
+    if (p.pane_id === pane_id && "name" in body && p.name !== body.name) { p.name = body.name; p.title = body.name || null; }
     if (body.session && p.session === session) p.session = body.session;
   }
 }
