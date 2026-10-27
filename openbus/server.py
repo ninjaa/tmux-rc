@@ -1756,7 +1756,7 @@ def rename(pane_id: str, body: RenameBody, request: Request):
         _audit(request, "rename", pane_id, detail, outcome="rejected: the pane changed")
         raise HTTPException(404 if not pane else 409, "the pane changed")
     session = body.session if body.session != pane.session else None
-    if session and body.was and body.was != pane.session:
+    if session and body.was and body.was != pane.session.strip():  # `was` comes trimmed
         _refuse(request, "rename", detail, 409, "the pane changed")
     # Refused before either name changes, so a 409 saves nothing.
     if session and session in {p.session for p in tmux.list_panes()}:

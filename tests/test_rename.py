@@ -86,6 +86,12 @@ def test_accepted_and_refused_names(pane, client, field, sent, kept):
     assert getattr(listed(pane), field) == (kept or {"session": "old", "name": ""}[field])
 
 
+def test_a_session_with_its_own_spaces_still_renames(pane, client):
+    T._run(["rename-session", "-t", "=old", " old "])  # made outside tmux-rc
+    r = client.post(f"/api/panes/{pane}/rename", json={"session": "new", "was": " old "})
+    assert r.status_code == 200 and listed(pane).session == "new"
+
+
 def test_a_taken_session_saves_neither_name(pane, client):
     r = client.post(f"/api/panes/{pane}/rename", json={"name": "Mine", "session": "taken"})
     assert r.status_code == 409 and client.woken == []
