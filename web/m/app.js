@@ -2435,9 +2435,10 @@ $("close-rename").onclick = () => $("rename-dialog").close();
 let renaming; // the pane the sheet opened for: a newer one under its %N is refused (birth)
 $("rename-pane").onclick = () => {
   closePaneMenu();
+  // A save still pending owns the sheet: it reopens as it was left, and that save's answer closes it.
+  if ($("rename-save").disabled) return $("rename-dialog").showModal();
   renaming = panes.find((p) => p.pane_id === active);
   if (!renaming) return;
-  $("rename-save").disabled = false;
   // defaultValue is what "unchanged" means: a session's own odd name is never sent back as is.
   $("pane-label").value = $("pane-label").defaultValue = renaming.name || "";
   $("pane-label").placeholder = renaming.name ? "" : paneName(renaming);
