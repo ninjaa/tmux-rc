@@ -77,7 +77,7 @@ from fastapi.responses import (  # noqa: E402
 )
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from PIL import Image  # noqa: E402
-from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints  # noqa: E402
 
 from . import (  # noqa: E402
     accounts,
@@ -239,7 +239,9 @@ class RenameBody(BaseModel):
     name: str | None = Field(default=None, max_length=200, pattern=r"^[^\p{Cc}\p{Zl}\p{Zp}]*$")
     session: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$")
     birth: str = ""
-    was: str = ""  # the session the sheet showed: in a group, find_pane answers the attached one
+    # The session the sheet showed, as it is (untrimmed): in a group, find_pane answers the
+    # attached one, and " work " is another session than "work".
+    was: Annotated[str, StringConstraints(strip_whitespace=False)] = ""
 
 
 class ClickBody(BaseModel):
@@ -1748,15 +1750,15 @@ def close_window(pane_id: str, request: Request, birth: str | None = None):
 @app.post("/api/panes/{pane_id}/rename")
 def rename(pane_id: str, body: RenameBody, request: Request):
     """Rename the pane, its tmux session, or both: names go stale as the work moves on. The
-    pane's name is kept in tmux (tmux.rename_pane), so it outlives a daemon restart. `birth`
-    refuses a newer pane under the menu's %N."""
+    pane's name is kept in tmux (tmux.rename), so it outlives a daemon restart. `birth`
+    refuses a newer pane under the menu's %N, checked again by tmux as it renames."""
     detail = f"name={body.name!r} session={body.session!r}"[:300]
     pane = tmux.find_pane(pane_id)
     if not pane or (body.birth and pane.pid != body.birth):
         _audit(request, "rename", pane_id, detail, outcome="rejected: the pane changed")
         raise HTTPException(404 if not pane else 409, "the pane changed")
     session = body.session if body.session != pane.session else None
-    if session and body.was and body.was != pane.session.strip():  # `was` comes trimmed
+    if session and body.was and body.was != pane.session:
         _refuse(request, "rename", detail, 409, "the pane changed")
     # Refused before either name changes, so a 409 saves nothing.
     if session and session in {p.session for p in tmux.list_panes()}:
@@ -1767,13 +1769,12 @@ def rename(pane_id: str, body: RenameBody, request: Request):
     if session and target and not target.startswith("%"):
         _refuse(request, "rename", detail, 409, f"TMUXRC_TARGET={target} watches by name")
     try:
-        if session:
-            tmux.rename_session(pane.session, session)
-        if body.name is not None:
-            tmux.rename_pane(pane.id, body.name)
+        renamed = tmux.rename(pane.id, body.birth or None, pane.session, session, body.name)
     except subprocess.CalledProcessError as e:
         _audit(request, "rename", pane_id, detail, outcome=f"error: tmux rc {e.returncode}")
         raise _pane_err(e) from None
+    if not renamed:
+        _refuse(request, "rename", detail, 409, "the pane changed")
     _audit(request, "rename", pane_id, detail)
     app.state.watcher.wake()  # names aren't on screen: a tick restamps them, no re-parse
     return {"ok": True}

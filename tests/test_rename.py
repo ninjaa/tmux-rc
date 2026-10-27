@@ -62,6 +62,7 @@ def test_refuses_a_taken_session_and_a_stale_menu(pane, client):
     moved = {"session": "new", "was": "gtm-0"}  # a group's other member is attached now
     assert client.post(f"/api/panes/{pane}/rename", json=moved).status_code == 409
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
+    assert not T.rename(pane, "1", "old", "new", "x")  # tmux checks the pid as it renames
     assert listed(pane).session == "old" and listed(pane).name == ""
 
 
@@ -75,6 +76,7 @@ NAMES = [
     *(("session", bad, None) for bad in ("a:b", "a.b", "a;", "=taken", "-archive", "_a", "café",
                                          "a\tb", "a\x00b", "a\u2028b")),
     ("name", "wip;", "wip;"), ("name", "-x", "-x"), ("name", "Ship: the fix.", "Ship: the fix."),
+    ("name", "#{pane_id} $HOME", "#{pane_id} $HOME"),
     *(("name", f"a{c}b", None) for c in ("\t", "\x85", "\u2028", "\u2029", "\x00", "\x1b")),
 ]
 
@@ -88,6 +90,9 @@ def test_accepted_and_refused_names(pane, client, field, sent, kept):
 
 def test_a_session_with_its_own_spaces_still_renames(pane, client):
     T._run(["rename-session", "-t", "=old", " old "])  # made outside tmux-rc
+    for other in ("old", " "):  # another session's name, not this one's
+        r = client.post(f"/api/panes/{pane}/rename", json={"session": "new", "was": other})
+        assert r.status_code == 409
     r = client.post(f"/api/panes/{pane}/rename", json={"session": "new", "was": " old "})
     assert r.status_code == 200 and listed(pane).session == "new"
 

@@ -43,7 +43,7 @@ OMP_TITLE_RE = re.compile(r"^π(?::|$| (?P<state>\S)(?: |$))")
 # probe ("Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA") lands there — a payload, not a title.
 _TITLE_ESCAPE_PAYLOAD = re.compile(r"^G[a-zA-Z]=[^,;]*(?:,[a-zA-Z]=[^,;]*)*;")
 
-# The name the user gave a pane from the phone (rename_pane). A pane option, so it lives in
+# The name the user gave a pane from the phone (rename). A pane option, so it lives in
 # tmux with the pane: it survives a daemon restart and goes when the pane closes.
 NAME = "@tmuxrc-name"
 # Format string for `list-panes -F`. Fields are tab-separated so pane titles /
@@ -143,7 +143,7 @@ class Pane:
     session_attached: str = "0"
     tty: str = ""  # the pane's pts, read for `secret`
     fit: str = ""  # the width tmux-rc fitted the window to (openbus/fit.py), if it did
-    name: str = ""  # the user's own name for the pane (rename_pane), if they gave one
+    name: str = ""  # the user's own name for the pane (rename), if they gave one
 
     @cached_property  # once per listing, i.e. per watcher tick; the send path rereads
     def secret(self) -> bool:
@@ -511,13 +511,22 @@ def kill_window(pane_id: str, pid: str | None = None) -> list[tuple[str, str]]:
 
     With `pid`, only while that process still owns the pane: tmux reuses pane ids, and the
     server checks and kills in one command, so a newer pane under the id is never hit. The
-    command's other branch says when it declined. Returns the panes it killed as (id, pid),
-    listed in the same command as the kill so the set is exact, or [] when it declined."""
-    kill = (shlex.join(["list-panes", "-t", pane_id, "-F", "#{pane_id} #{pane_pid}"])
-            + " ; " + shlex.join(["kill-window", "-t", pane_id]))
+    command's other branch says when it declined (_if_pid). Returns the panes it killed as
+    (id, pid), listed in the same command as the kill so the set is exact, or [] when it
+    declined."""
+    out = _if_pid(pane_id, pid, ["list-panes", "-t", pane_id, "-F", "#{pane_id} #{pane_pid}"],
+                  ["kill-window", "-t", pane_id])
+    return [tuple(line.split(" ", 1)) for line in (out or "").splitlines() if line]
+
+
+def _if_pid(pane_id: str, pid: str | None, *commands: list[str]) -> str | None:
+    """Run `commands` only while process `pid` still owns the pane (any process with None),
+    checked by tmux in the same command: tmux reuses pane ids, so a newer pane under the id
+    is never hit. Their output, or None when it declined."""
     guard = f"#{{==:#{{pane_pid}},{int(pid)}}}" if pid is not None else "1"
-    out = _run(["if-shell", "-F", "-t", pane_id, guard, kill, "display-message -p kept"])
-    return [tuple(line.split(" ", 1)) for line in out.splitlines() if line not in ("", "kept")]
+    out = _run(["if-shell", "-F", "-t", pane_id, guard, " ; ".join(map(shlex.join, commands)),
+                "display-message -p kept"])
+    return None if out == "kept\n" else out
 
 
 def _literal(arg: str) -> str:
@@ -526,15 +535,16 @@ def _literal(arg: str) -> str:
     return arg[:-1] + "\\;" if arg.endswith(";") else arg
 
 
-def rename_pane(pane_id: str, name: str) -> None:
-    """Name the pane (Pane.display_title), or with "" give it back to its app's title."""
-    _run(["set-option", "-p", "-t", pane_id, "--", NAME, _literal(name)] if name
-         else ["set-option", "-pu", "-t", pane_id, NAME])
-
-
-def rename_session(session: str, name: str) -> None:
-    """Rename a tmux session, matched exactly (`=`): a bare name is a prefix match."""
-    _run(["rename-session", "-t", _literal(f"={session}"), name])
+def rename(pane_id: str, pid: str | None, session: str, new_session: str | None,
+           name: str | None) -> bool:
+    """Rename the pane's `session` (matched exactly: a bare name is a prefix match), then name
+    the pane (Pane.display_title; "" gives it back to its app's title), only while `pid` owns
+    it (_if_pid). None leaves that name alone. False when tmux declined."""
+    commands = [["rename-session", "-t", f"={session}", new_session]] if new_session else []
+    if name is not None:
+        commands.append(["set-option", "-p", "-t", pane_id, "--", NAME, name] if name
+                        else ["set-option", "-pu", "-t", pane_id, NAME])
+    return not commands or _if_pid(pane_id, pid, *commands) is not None
 
 
 def server_path() -> str | None:
