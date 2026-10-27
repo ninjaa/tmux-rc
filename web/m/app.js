@@ -2451,7 +2451,7 @@ $("rename-pane").onclick = () => {
 const SESSION_HINT = "A session name is letters, digits, spaces, _ and -, starting with a letter or digit.";
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
-  const body = { birth: renaming.birth ?? "" };
+  const body = { birth: renaming.birth ?? "", was: renaming.session || "" };
   for (const [key, id] of [["name", "pane-label"], ["session", "session-label"]]) if ($(id).value !== $(id).defaultValue) body[key] = $(id).value;
   if (!("name" in body || "session" in body)) return $("rename-dialog").close();
   $("rename-save").disabled = true;

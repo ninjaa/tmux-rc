@@ -59,6 +59,8 @@ def test_refuses_a_taken_session_and_a_stale_menu(pane, client):
     assert client.post(f"/api/panes/{pane}/rename", json={"session": "taken"}).status_code == 409
     stale = {"name": "x", "birth": "1"}
     assert client.post(f"/api/panes/{pane}/rename", json=stale).status_code == 409
+    moved = {"session": "new", "was": "gtm-0"}  # a group's other member is attached now
+    assert client.post(f"/api/panes/{pane}/rename", json=moved).status_code == 409
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
     assert listed(pane).session == "old" and listed(pane).name == ""
 

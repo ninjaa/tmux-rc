@@ -239,6 +239,7 @@ class RenameBody(BaseModel):
     name: str | None = Field(default=None, max_length=200, pattern=r"^[^\p{Cc}\p{Zl}\p{Zp}]*$")
     session: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$")
     birth: str = ""
+    was: str = ""  # the session the sheet showed: in a group, find_pane answers the attached one
 
 
 class ClickBody(BaseModel):
@@ -1755,6 +1756,8 @@ def rename(pane_id: str, body: RenameBody, request: Request):
         _audit(request, "rename", pane_id, detail, outcome="rejected: the pane changed")
         raise HTTPException(404 if not pane else 409, "the pane changed")
     session = body.session if body.session != pane.session else None
+    if session and body.was and body.was != pane.session:
+        _refuse(request, "rename", detail, 409, "the pane changed")
     # Refused before either name changes, so a 409 saves nothing.
     if session and session in {p.session for p in tmux.list_panes()}:
         _refuse(request, "rename", detail, 409, f"there is already a session {session}")
