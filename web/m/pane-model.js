@@ -139,19 +139,6 @@ export function paneName(pane) {
   const label = pane.label && !sessionOf(pane) && pane.label === `${pane.session}:${pane.window_index}` ? `Window ${pane.window_index}` : pane.label;
   return pane.title || label || pane.window_name || pane.pane_id;
 }
-// A rename shown now rather than on the next poll, which then says the same. `pane` is the pane as
-// the sheet showed it, read first: it may be one of `panes`, which the loop changes. A name changes
-// only where the pane still has the one the sheet showed, as a session moves only the panes still in
-// it: a poll (or a later rename) that got there first is newer, and its title is the daemon's. A
-// cleared name leaves the title to that poll (only the daemon knows the app's own title). A pane
-// replaced under the same %N (a new birth) is the poll's to show, and so are its siblings.
-export function applyRename(panes, { pane_id, birth, session, name = "" }, body) {
-  if (!panes.some((p) => p.pane_id === pane_id && p.birth === birth)) return;
-  for (const p of panes) {
-    if (p.pane_id === pane_id && "name" in body && (p.name || "") === name) { p.name = body.name; p.title = body.name || null; }
-    if (body.session && p.session === session) p.session = body.session;
-  }
-}
 // The session a pane is in, where that tells it apart: "" when every pane shares one, so a
 // single-session user never sees tmux plumbing. Every surface that names a session asks
 // here; app.js notes the panes on each poll (noteSessions).

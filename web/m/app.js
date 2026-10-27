@@ -6,7 +6,7 @@ import { Composer, bindAttach, enterSubmits } from "/m/composer.js";
 import { answerBody, pickCursorRow, STALE, UNTAKEN } from "/cursor-pick.js";
 import { sendPresence, setupPush, stateUrl } from "/push.js";
 import { paneLinks, askLink } from "/pr-links.js";
-import { needsYou, activityLabel, activityClass, markWorking, isRecent, matchesFilter, matchesSearch, newestFirst, stillOnPane, paneName, paneActivity, paneHeadline, panePending, markLine, paneMeta, questionItems, records, itemDone, awaitingLaunch, LAUNCH_GRACE_MS, age, since, esc, markEnding, noteSessions, oneSession, sessionOf, applyRename } from "/m/pane-model.js";
+import { needsYou, activityLabel, activityClass, markWorking, isRecent, matchesFilter, matchesSearch, newestFirst, stillOnPane, paneName, paneActivity, paneHeadline, panePending, markLine, paneMeta, questionItems, records, itemDone, awaitingLaunch, LAUNCH_GRACE_MS, age, since, esc, markEnding, noteSessions, oneSession, sessionOf } from "/m/pane-model.js";
 import { parseHash, formatHash, historyMode, PAGES, scratchUrl } from "/m/url-state.js";
 import { overscroll, overscrollState, RESIST_PX, IDLE_MS } from "/m/overscroll.js";
 import { dragToDismiss } from "/m/drag-dismiss.js";
@@ -2432,46 +2432,34 @@ html($("kill-pane"), `${licon("power", 18)}<span>Kill window</span>`);
 // No "name" in its fields' ids or labels: iOS takes such a field for a person's and offers a contact.
 html($("rename-pane"), `${licon("pencil", 18)}<span>Rename…</span>`);
 $("close-rename").onclick = () => $("rename-dialog").close();
+let renaming; // the pane the sheet opened for: a newer one under its %N is refused (birth)
 $("rename-pane").onclick = () => {
   closePaneMenu();
-  const pane = panes.find((p) => p.pane_id === active);
-  if (!pane) return;
-  const form = $("rename-form");
-  form._pane = { ...pane }; // as shown now: a late save's applyRename must not move what this sheet compares to
-  form._open = {}; // this opening: a save still pending from an earlier one leaves its sheet alone
+  renaming = panes.find((p) => p.pane_id === active);
+  if (!renaming) return;
   $("rename-save").disabled = false;
-  $("pane-label").value = pane.name || "";
-  $("pane-label").placeholder = pane.name ? "" : paneName(pane);
-  $("session-label").value = pane.session || "";
+  // defaultValue is what "unchanged" means: a session's own odd name is never sent back as is.
+  $("pane-label").value = $("pane-label").defaultValue = renaming.name || "";
+  $("pane-label").placeholder = renaming.name ? "" : paneName(renaming);
+  $("session-label").value = $("session-label").defaultValue = renaming.session || "";
   text($("rename-error"), "");
   $("rename-dialog").showModal();
   $("pane-label").select();
 };
-// What the daemon takes for a new session name (server.py RenameBody), said as soon as the field holds
-// anything else. The session's own name, made outside tmux-rc, may not fit, and is never sent unchanged.
+// What the daemon takes for a session name (server.py RenameBody, which refuses anything else with a 422).
 const SESSION_HINT = "A session name is letters, digits, spaces, _ and -, starting with a letter or digit.";
-// Untouched means the raw field: a session named "old " stays put when only the title changes.
-const sessionTouched = () => $("session-label").value !== ($("rename-form")._pane.session || "");
-const sessionOk = () => !sessionTouched() || (!!$("session-label").value.trim() && !$("session-label").validity.patternMismatch);
-$("session-label").oninput = () => text($("rename-error"), sessionOk() ? "" : SESSION_HINT);
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
-  if (!sessionOk()) return text($("rename-error"), SESSION_HINT);
-  const { _pane: pane, _open: open } = e.target, name = $("pane-label").value.trim(), session = $("session-label").value.trim();
-  const mine = () => e.target._open === open;
-  const body = { birth: pane.birth ?? "" };
-  if (name !== (pane.name || "")) body.name = name;
-  if (sessionTouched()) body.session = session;
+  const body = { birth: renaming.birth ?? "" };
+  for (const [key, id] of [["name", "pane-label"], ["session", "session-label"]]) if ($(id).value !== $(id).defaultValue) body[key] = $(id).value;
   if (!("name" in body || "session" in body)) return $("rename-dialog").close();
   $("rename-save").disabled = true;
   try {
-    await post(paneUrl(pane.pane_id, "rename"), body);
-    if (mine()) $("rename-dialog").close();
-    applyRename(panes, pane, body);
-    render();
+    await post(paneUrl(renaming.pane_id, "rename"), body);
+    $("rename-dialog").close(); // the daemon wakes its watcher: the next poll shows the new name
   } catch (error) {
-    if (mine()) text($("rename-error"), `Could not rename: ${error.detail?.message || error.detail || error.message}`);
-  } finally { if (mine()) $("rename-save").disabled = false; }
+    text($("rename-error"), error.status === 422 && "session" in body ? SESSION_HINT : `Could not rename: ${error.detail || error.message}`);
+  } finally { $("rename-save").disabled = false; }
 };
 // `birth` is the incarnation the menu or sheet was drawn for: a newer pane under its %N is refused.
 async function killWindow(pane, birth) {

@@ -169,8 +169,8 @@ class Pane:
         defaults the title to the hostname, and stores APC payloads (Kitty graphics
         probes) as the title — both noise -> None. A name the user gave the pane beats
         all of it: an agent rewrites its title as it works, and a task outgrows a name."""
-        if self.name.strip():
-            return self.name.strip()
+        if name := self.name.strip():
+            return name
         if _TITLE_ESCAPE_PAYLOAD.match(self.title):
             return None
         t = _TITLE_GLYPHS.sub("", OMP_TITLE_RE.sub("", self.title)).strip()
