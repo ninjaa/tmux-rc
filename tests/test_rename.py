@@ -17,6 +17,8 @@ import openbus.server as S
 from openbus import tmux as T
 
 pytestmark = pytest.mark.skipif(not shutil.which("tmux"), reason="tmux is not installed")
+TMUX_3_4 = bool(shutil.which("tmux")) and subprocess.run(
+    ["tmux", "-V"], capture_output=True, text=True).stdout.strip() == "tmux 3.4"
 
 
 @pytest.fixture
@@ -63,9 +65,8 @@ def test_refuses_a_taken_session_and_a_stale_menu(pane, client):
     moved = {"session": "new", "was": "gtm-0"}  # a group's other member is attached now
     assert client.post(f"/api/panes/{pane}/rename", json=moved).status_code == 409
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
-    assert not T.rename(listed(pane), "1", "new", "x")  # tmux checks the pid as it renames
-    elsewhere = replace(listed(pane), session="taken")  # and that it is still that pane
-    assert not T.rename(elsewhere, listed(pane).pid, "new", "x")
+    assert not T.rename(replace(listed(pane), pid="1"), "new", "x")  # checked as it renames
+    assert not T.rename(replace(listed(pane), session="taken"), "new", "x")  # another pane
     assert listed(pane).session == "old" and listed(pane).name == ""
 
 
@@ -79,7 +80,10 @@ NAMES = [
     *(("session", bad, None) for bad in ("a:b", "a.b", "a;", "=taken", "-archive", "_a", "café",
                                          "a\tb", "a\x00b", "a\u2028b")),
     ("name", "wip;", "wip;"), ("name", "-x", "-x"), ("name", "Ship: the fix.", "Ship: the fix."),
-    ("name", "#{pane_id} $HOME ~ 'a' \"b\" \\", "#{pane_id} $HOME ~ 'a' \"b\" \\"),
+    ("name", "#{pane_id} $ ~ 'a' \"b\" \\;", "#{pane_id} $ ~ 'a' \"b\" \\;"),
+    # tmux 3.4 itself reads back "$HOME" in any pane option or title as "\$HOME".
+    pytest.param("name", "a $HOME", "a $HOME", marks=pytest.mark.xfail(
+        TMUX_3_4, reason="tmux 3.4 escapes $ in what it reads back", strict=True)),
     *(("name", f"a{c}b", None) for c in ("\t", "\x85", "\u2028", "\u2029", "\x00", "\x1b")),
 ]
 

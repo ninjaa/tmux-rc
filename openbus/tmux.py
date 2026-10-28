@@ -511,26 +511,13 @@ def kill_window(pane_id: str, pid: str | None = None) -> list[tuple[str, str]]:
 
     With `pid`, only while that process still owns the pane: tmux reuses pane ids, and the
     server checks and kills in one command, so a newer pane under the id is never hit. The
-    command's other branch says when it declined (_if_pid). Returns the panes it killed as
-    (id, pid), listed in the same command as the kill so the set is exact, or [] when it
-    declined."""
-    out = _if_pid(pane_id, pid, ["list-panes", "-t", pane_id, "-F", "#{pane_id} #{pane_pid}"],
-                  ["kill-window", "-t", pane_id])
-    return [tuple(line.split(" ", 1)) for line in (out or "").splitlines() if line]
-
-
-def _if_pid(pane_id: str, pid: str | None, *commands: list[str], setup: tuple[str, ...] = (),
-            at: str | None = None, also: str = "1") -> str | None:
-    """Run `commands` only while process `pid` still owns the pane (any process with None),
-    checked by tmux in the same command: tmux reuses pane ids, so a newer pane under the id
-    is never hit. `at` (default the pane) must resolve to that pane, and the format `also`
-    must hold there. `setup` (argv, ending in ";") runs first, unguarded. Their output, or
-    None when it declined."""
+    command's other branch says when it declined. Returns the panes it killed as (id, pid),
+    listed in the same command as the kill so the set is exact, or [] when it declined."""
+    kill = (shlex.join(["list-panes", "-t", pane_id, "-F", "#{pane_id} #{pane_pid}"])
+            + " ; " + shlex.join(["kill-window", "-t", pane_id]))
     guard = f"#{{==:#{{pane_pid}},{int(pid)}}}" if pid is not None else "1"
-    out = _run([*setup, "if-shell", "-F", "-t", at or pane_id,
-                f"#{{&&:#{{&&:#{{==:#{{pane_id}},{pane_id}}},{guard}}},{also}}}",
-                " ; ".join(map(shlex.join, commands)), "display-message -p kept"])
-    return None if out == "kept\n" else out
+    out = _run(["if-shell", "-F", "-t", pane_id, guard, kill, "display-message -p kept"])
+    return [tuple(line.split(" ", 1)) for line in out.splitlines() if line not in ("", "kept")]
 
 
 def _literal(arg: str) -> str:
@@ -539,27 +526,24 @@ def _literal(arg: str) -> str:
     return arg[:-1] + "\\;" if arg.endswith(";") else arg
 
 
-def rename(pane: Pane, pid: str | None, new_session: str | None, name: str | None) -> bool:
+def rename(pane: Pane, session: str | None, name: str | None) -> bool:
     """Rename the pane's session, then name the pane (Pane.display_title; "" gives it back to
-    its app's title), only while `pid` owns it (_if_pid). None leaves that name alone. False
-    when tmux declined.
+    its app's title); None leaves that name alone. False, renaming nothing, when the pane at
+    session:window.pane is no longer this one (tmux reuses %N): that address also pins the
+    member of a session group the pane was listed under.
 
-    In a session group the session is the member the pane was listed under, by its id. The
-    name reaches the commands in a global option set from argv: they are text tmux parses
-    again, and tmux 3.4 keeps a backslash it adds before `$` in quoted text there. A new
-    session name is an allowlist, so it is inlined."""
+    Plain argv calls: a pid-guarded if-shell would be one atomic command, but its commands
+    are text tmux re-reads, and tmux 3.4 keeps a backslash it adds before `$` there."""
     at = f"={pane.session}:{pane.window_index}.{pane.pane_index}"
-    commands, also = [], "1"
-    if new_session:
-        sid = _run(["display-message", "-p", "-t", at, "#{session_id}"]).strip()
-        commands = [["rename-session", "-t", sid, new_session]]
-        also = f"#{{==:#{{session_id}},{sid}}}"
+    if _run(["display-message", "-p", "-t", at, "#{pane_id} #{pane_pid}"]).split() != [
+            pane.id, pane.pid]:
+        return False
+    if session:
+        _run(["rename-session", "-t", _literal(at), "--", session])
     if name is not None:
-        commands.append(["set-option", "-pF", "-t", pane.id, NAME, "#{@tmuxrc-new}"] if name
-                        else ["set-option", "-pu", "-t", pane.id, NAME])
-    setup = ("set-option", "-g", "--", "@tmuxrc-new", _literal(name or ""), ";")
-    return not commands or _if_pid(pane.id, pid, *commands, setup=setup, at=at,
-                                   also=also) is not None
+        _run(["set-option", "-p", "-t", pane.id, "--", NAME, _literal(name)] if name
+             else ["set-option", "-pu", "-t", pane.id, NAME])
+    return True
 
 
 def server_path() -> str | None:
