@@ -7,6 +7,7 @@ Cleanup kills that socket's panes and nothing else."""
 import shutil
 import subprocess
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -62,8 +63,9 @@ def test_refuses_a_taken_session_and_a_stale_menu(pane, client):
     moved = {"session": "new", "was": "gtm-0"}  # a group's other member is attached now
     assert client.post(f"/api/panes/{pane}/rename", json=moved).status_code == 409
     assert client.post("/api/panes/%25999/rename", json={"name": "x"}).status_code == 404
-    assert not T.rename(pane, "1", "old", "new", "x")  # tmux checks the pid as it renames
-    assert not T.rename(pane, listed(pane).pid, "other", "new", "x")  # and the session
+    assert not T.rename(listed(pane), "1", "new", "x")  # tmux checks the pid as it renames
+    elsewhere = replace(listed(pane), session="taken")  # and that it is still that pane
+    assert not T.rename(elsewhere, listed(pane).pid, "new", "x")
     assert listed(pane).session == "old" and listed(pane).name == ""
 
 
@@ -96,6 +98,18 @@ def test_a_session_with_its_own_spaces_still_renames(pane, client):
         assert r.status_code == 409
     r = client.post(f"/api/panes/{pane}/rename", json={"session": "new", "was": " old "})
     assert r.status_code == 200 and listed(pane).session == "new"
+
+
+def test_a_grouped_pane_renames_the_member_it_is_listed_under(pane, client):
+    T._run(["new-session", "-d", "-s", "grp", "-t", "old"])
+    shown = listed(pane)
+    r = client.post(f"/api/panes/{pane}/rename", json={"name": "Mine", "birth": shown.pid})
+    assert r.status_code == 200 and listed(pane).name == "Mine"
+    body = {"session": "new", "birth": shown.pid, "was": shown.session}
+    assert client.post(f"/api/panes/{pane}/rename", json=body).status_code == 200
+    left = {"old", "grp"} - {shown.session}
+    sessions = T._run(["list-sessions", "-F", "#{session_name}"]).split()
+    assert set(sessions) == {"new", "taken", *left}
 
 
 def test_a_taken_session_saves_neither_name(pane, client):

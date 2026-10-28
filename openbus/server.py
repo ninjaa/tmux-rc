@@ -1769,7 +1769,7 @@ def rename(pane_id: str, body: RenameBody, request: Request):
     if session and target and not target.startswith("%"):
         _refuse(request, "rename", detail, 409, f"TMUXRC_TARGET={target} watches by name")
     try:
-        renamed = tmux.rename(pane.id, body.birth or None, pane.session, session, body.name)
+        renamed = tmux.rename(pane, body.birth or None, session, body.name)
     except subprocess.CalledProcessError as e:
         _audit(request, "rename", pane_id, detail, outcome=f"error: tmux rc {e.returncode}")
         raise _pane_err(e) from None
