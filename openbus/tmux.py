@@ -519,13 +519,15 @@ def kill_window(pane_id: str, pid: str | None = None) -> list[tuple[str, str]]:
     return [tuple(line.split(" ", 1)) for line in (out or "").splitlines() if line]
 
 
-def _if_pid(pane_id: str, pid: str | None, *commands: list[str]) -> str | None:
-    """Run `commands` only while process `pid` still owns the pane (any process with None),
-    checked by tmux in the same command: tmux reuses pane ids, so a newer pane under the id
-    is never hit. Their output, or None when it declined."""
+def _if_pid(pane_id: str, pid: str | None, *commands: list[str], setup: tuple[str, ...] = (),
+            also: str = "1") -> str | None:
+    """Run `commands` only while process `pid` still owns the pane (any process with None)
+    and the format `also` holds, checked by tmux in the same command: tmux reuses pane ids,
+    so a newer pane under the id is never hit. `setup` (argv, ending in ";") runs first,
+    unguarded. Their output, or None when it declined."""
     guard = f"#{{==:#{{pane_pid}},{int(pid)}}}" if pid is not None else "1"
-    out = _run(["if-shell", "-F", "-t", pane_id, guard, " ; ".join(map(shlex.join, commands)),
-                "display-message -p kept"])
+    out = _run([*setup, "if-shell", "-F", "-t", pane_id, f"#{{&&:{guard},{also}}}",
+                " ; ".join(map(shlex.join, commands)), "display-message -p kept"])
     return None if out == "kept\n" else out
 
 
@@ -537,14 +539,21 @@ def _literal(arg: str) -> str:
 
 def rename(pane_id: str, pid: str | None, session: str, new_session: str | None,
            name: str | None) -> bool:
-    """Rename the pane's `session` (matched exactly: a bare name is a prefix match), then name
-    the pane (Pane.display_title; "" gives it back to its app's title), only while `pid` owns
-    it (_if_pid). None leaves that name alone. False when tmux declined."""
-    commands = [["rename-session", "-t", f"={session}", new_session]] if new_session else []
+    """Rename the pane's session, then name the pane (Pane.display_title; "" gives it back to
+    its app's title), only while `pid` owns it and its session is still `session` (_if_pid).
+    None leaves that name alone. False when tmux declined.
+
+    The old session and the name reach the guarded commands in global options, set from argv:
+    those commands are text tmux parses again, and tmux 3.4 keeps a backslash it adds before
+    `$` there. A new session name is an allowlist, so it is inlined."""
+    setup = ("set-option", "-g", "--", "@tmuxrc-was", _literal(session), ";",
+             "set-option", "-g", "--", "@tmuxrc-new", _literal(name or ""), ";")
+    commands = [["rename-session", "-t", pane_id, new_session]] if new_session else []
     if name is not None:
-        commands.append(["set-option", "-p", "-t", pane_id, "--", NAME, name] if name
+        commands.append(["set-option", "-pF", "-t", pane_id, NAME, "#{@tmuxrc-new}"] if name
                         else ["set-option", "-pu", "-t", pane_id, NAME])
-    return not commands or _if_pid(pane_id, pid, *commands) is not None
+    return not commands or _if_pid(pane_id, pid, *commands, setup=setup,
+                                   also="#{==:#{session_name},#{@tmuxrc-was}}") is not None
 
 
 def server_path() -> str | None:
